@@ -367,3 +367,21 @@ The browser tests never use your real SMTP, Claude or WhatsApp keys, and never t
 4. Optional: `ANTHROPIC_API_KEY`, the WhatsApp keys + approved template, a Shopify store (connect on the website page, then compare the numbers with Shopify).
 5. Have a native speaker read the Roman Urdu and Urdu report sentences (`backend/app/reports/summary.py`, the `TEXT` table).
 6. HTTPS, one main domain for frontend and backend, and `uvicorn --proxy-headers` (see "Security notes" above).
+
+### Deploying: Vercel (frontend) + Render (backend)
+
+No custom domain needed. The browser only talks to the Vercel site, and Vercel forwards `/api/*` to Render, so the login cookie belongs to the Vercel site.
+
+| Where | Setting | Value |
+|---|---|---|
+| Vercel | Root Directory | `frontend` |
+| Vercel | `NEXT_PUBLIC_API_URL` | `/` |
+| Vercel | `BACKEND_URL` | your Render address, e.g. `https://pulsewise-api.onrender.com` (no trailing `/`) |
+| Render | Root Directory | `backend` |
+| Render | Build Command | `pip install -r requirements.txt` |
+| Render | Start Command | `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'` |
+| Render | `FRONTEND_URL` | your Vercel address, e.g. `https://pulsewise.vercel.app` (exactly, no trailing `/`) |
+| Render | `PYTHON_VERSION` | `3.12.7` |
+| Render | `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY` | the same values as in `backend/.env` |
+
+Changing a `NEXT_PUBLIC_*` value needs a new Vercel deploy. Keep ONE Render instance (the background jobs run inside it), and note Render's free plan sleeps, which pauses the jobs.

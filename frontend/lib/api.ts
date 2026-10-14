@@ -4,6 +4,7 @@
 // Login uses an httpOnly cookie set by the backend. `credentials: "include"` makes
 // the browser send that cookie with every request (JavaScript itself can't read it).
 
+// Locally: the backend address. In production behind the proxy (see next.config.ts): "/" = "this same site".
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 export type QueryParams = Record<string, string | number | null | undefined>;
@@ -37,7 +38,8 @@ interface RequestOptions {
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 async function request<T>(method: Method, path: string, options: RequestOptions = {}): Promise<T> {
-  const url = new URL(API_URL + path);
+  // (An empty API_URL means "this same site", so the address is resolved against the page's own origin.)
+  const url = new URL(API_URL + path, typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
   for (const [key, value] of Object.entries(options.params ?? {})) {
     if (value !== null && value !== undefined && value !== "") {
       url.searchParams.set(key, String(value));
