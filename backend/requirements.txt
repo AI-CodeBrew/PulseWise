@@ -1,0 +1,25 @@
+# Web API
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+python-dotenv>=1.0
+
+# Database (PostgreSQL on Supabase): ORM, migrations, driver
+sqlalchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.2
+
+# Security: password hashing, login tokens, encrypting stored API keys
+argon2-cffi>=23.1
+pyjwt>=2.8
+cryptography>=42
+
+# Background jobs (hourly usage sync, daily checks...) and time zones
+apscheduler>=3.10,<4
+tzdata>=2024.1
+
+# Invoice and weekly-report PDFs
+fpdf2>=2.8
+
+# AI-written report summaries (optional at run time: needs ANTHROPIC_API_KEY)
+anthropic>=1.13

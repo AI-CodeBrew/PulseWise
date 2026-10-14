@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+/*
+  Design tokens (colors) for the whole dashboard.
+  Components use these by ROLE (bg-surface, text-ink-2, ...), never raw hex, so
+  re-branding for a client later only means changing the values here.
+
+  Chart colors come from a palette that is validated for color-blind readers
+  (blue + orange pass in light and dark mode).
+*/
+:root {
+  color-scheme: light;
+  --page: #f6f6f3; /* app background */
+  --surface: #fcfcfb; /* cards and charts */
+  --surface-2: #efeeea; /* hover rows, skeletons, chips */
+  --ink: #0b0b0b; /* primary text */
+  --ink-2: #52514e; /* secondary text */
+  --muted: #74726c; /* small labels, axis text */
+  --grid: #e1e0d9; /* chart gridlines */
+  --axis: #c3c2b7; /* chart baseline */
+  --line: rgba(11, 11, 11, 0.1); /* hairline borders */
+  --accent: #2a78d6; /* brand accent: links, selected states */
+  --accent-soft: rgba(42, 120, 214, 0.1);
+  --series-1: #2a78d6; /* chart series 1 (blue) */
+  --series-2: #eb6834; /* chart series 2 (orange) */
+  --good: #006300; /* "better than last period" text */
+  --bad: #c03030; /* "worse than last period" / errors */
+  --bad-soft: rgba(208, 59, 59, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #262624;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #9a9890;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --line: rgba(255, 255, 255, 0.1);
+    --accent: #5598e7;
+    --accent-soft: rgba(57, 135, 229, 0.16);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --good: #0ca30c;
+    --bad: #e66767;
+    --bad-soft: rgba(230, 103, 103, 0.14);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #262624;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #9a9890;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --line: rgba(255, 255, 255, 0.1);
+  --accent: #5598e7;
+  --accent-soft: rgba(57, 135, 229, 0.16);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --good: #0ca30c;
+  --bad: #e66767;
+  --bad-soft: rgba(230, 103, 103, 0.14);
+}
+
+/* Make the tokens available as Tailwind classes: bg-surface, text-ink-2, border-line ... */
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}

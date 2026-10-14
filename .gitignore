@@ -1,0 +1,29 @@
+# Secrets — never commit real keys
+.env
+.env.local
+*.env.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# e2e test data (throwaway DB, logs, screenshots)
+e2e/.data/
+
+# Build artefacts
+*.tsbuildinfo
+next-env.d.ts
+.pytest_cache/
