@@ -29,6 +29,7 @@ $db = Join-Path $data "e2e.db"
 Remove-Item $db -ErrorAction SilentlyContinue
 $env:DATABASE_URL = "sqlite:///" + ($db -replace '\\', '/')
 $env:SCHEDULER_ENABLED = "false"
+$env:NEXT_PUBLIC_API_URL = "http://localhost:8000"   # the browser tests call the backend directly (no proxy)
 # Safety: the browser tests must never use your real keys, whatever is in backend\.env (an env variable wins over .env).
 $env:ANTHROPIC_API_KEY = ""
 $env:SMTP_HOST = ""

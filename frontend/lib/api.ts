@@ -4,8 +4,12 @@
 // Login uses an httpOnly cookie set by the backend. `credentials: "include"` makes
 // the browser send that cookie with every request (JavaScript itself can't read it).
 
-// Locally: the backend address. In production behind the proxy (see next.config.ts): "/" = "this same site".
-export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+// Where the backend is. Locally (npm run dev): http://localhost:8000. In production the default is "this same site"
+// ("" = relative /api/... URLs), which works with the proxy in next.config.ts (set BACKEND_URL on the host).
+// NEXT_PUBLIC_API_URL overrides it ("/" also means "this same site").
+const configured = process.env.NEXT_PUBLIC_API_URL;
+const fallback = process.env.NODE_ENV === "production" ? "" : "http://localhost:8000";
+export const API_URL = (configured || fallback).replace(/\/$/, "");
 
 export type QueryParams = Record<string, string | number | null | undefined>;
 
