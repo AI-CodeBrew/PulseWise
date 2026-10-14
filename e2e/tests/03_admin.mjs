@@ -15,9 +15,9 @@ await admin.login(...creds.admin);
 await admin.waitForPath(`/sites/${ids.demoSite}`);
 
 // 1. Admin link and overview
-await admin.waitForText("Admin panel →");
-t.check("admin sees the 'Admin panel' link in the dashboard", true);
-await admin.clickText("Admin panel →");
+await admin.waitForText("Bounce rate", 40000);
+t.check("the client dashboard has no link to the admin panel (even for an admin)", !(await admin.text()).includes("Admin panel") && !(await admin.text()).includes("· Admin"));
+await admin.goto("/admin");
 t.check("admin overview opens", await admin.waitForText("Admin overview"));
 t.check("  ...with the counts", await admin.waitFor(`document.body.innerText.includes("Clients") && document.body.innerText.includes("Websites")`));
 

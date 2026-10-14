@@ -98,20 +98,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <div className="border-t border-line px-3 py-3">
           <div className="px-3">
             <p className="truncate text-sm font-medium text-ink">{me.user.name || me.user.email}</p>
-            <p className="truncate text-xs text-muted">
-              {me.user.email}
-              {me.user.is_admin && " · Admin"}
-            </p>
+            <p className="truncate text-xs text-muted">{me.user.email}</p>
           </div>
-          {me.user.is_admin && !me.view_as && (
-            <Link
-              href="/admin"
-              onClick={onNavigate}
-              className="mt-2 block rounded-lg bg-accent-soft px-3 py-1.5 text-center text-xs font-medium text-accent hover:opacity-80"
-            >
-              Admin panel →
-            </Link>
-          )}
           <div className="mt-2 flex gap-1">
             <Link
               href="/account"
