@@ -67,9 +67,6 @@ export function AdminShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         <div className="border-t border-line px-3 py-3 text-sm">
-          <Link href="/" className="block rounded-lg px-3 py-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink">
-            ← Client dashboards
-          </Link>
           <button
             type="button"
             onClick={logout}
@@ -83,11 +80,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
       {/* Phones: the same menu as a row you can scroll sideways */}
       <header className="sticky top-0 z-30 border-b border-line bg-page/90 backdrop-blur lg:hidden">
-        <div className="flex h-12 items-center justify-between px-4">
+        <div className="flex h-12 items-center px-4">
           <span className="font-semibold text-ink">Admin</span>
-          <Link href="/" className="text-sm text-accent">
-            Dashboards →
-          </Link>
         </div>
         <nav aria-label="Admin" className="flex gap-1 overflow-x-auto px-3 pb-2">
           {ADMIN_NAV.map((item) => (
