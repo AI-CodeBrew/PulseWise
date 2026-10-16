@@ -416,3 +416,44 @@ def test_clients_search_is_safe(api, world):
     assert [c["name"] for c in admin.get("/api/admin/clients", params={"q": "client a"}).json()["results"]] == ["Client A"]
     assert admin.get("/api/admin/clients", params={"q": "%"}).json()["results"] == []  # '%' is not a wildcard here
     assert make_client  # (imported helper used elsewhere)
+
+
+# ------------------------------------------------------------------ onboarding a customer in one step
+
+
+ONBOARD = {"email": "Ali@Shop.test", "name": "Ali", "password": "Admin-Chosen-Pw-1", "website_name": "alishop.pk",
+           "posthog_host": "https://us.posthog.com", "posthog_project_id": 777001, "posthog_api_key": "phx_onboard_key_123"}
+
+
+def test_onboarding_creates_a_login_that_sees_only_its_own_website(api, db, world, fake_posthog):
+    response = api("admin@agency.test").post("/api/admin/users", json=ONBOARD)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["email"] == "ali@shop.test" and body["login_url"].endswith("/login")
+    assert "Admin-Chosen-Pw-1" not in response.text and "phx_onboard_key_123" not in response.text
+
+    # The user logs in with the password the admin chose and sees their own website, and only that.
+    me = api("ali@shop.test", password="Admin-Chosen-Pw-1").get("/api/auth/me").json()
+    assert [w["id"] for w in me["websites"]] == [body["website_id"]]
+
+    stored = db.get(Website, uuid.UUID(body["website_id"]))
+    assert decrypt_secret(stored.posthog_api_key_encrypted) == "phx_onboard_key_123"
+    assert stored.posthog_project_token == "phc_fake_project_token"
+    assert 777001 in fake_posthog.projects_called()  # the key was tested first
+
+    entries = db.execute(text("SELECT details FROM audit_log WHERE action = 'admin.customer_onboarded'")).scalars().all()
+    assert len(entries) == 1 and "phx_" not in str(entries[0]) and "Admin-Chosen" not in str(entries[0])
+
+
+def test_onboarding_saves_nothing_when_posthog_rejects_the_key(api, db, world):
+    response = api("admin@agency.test").post("/api/admin/users", json={**ONBOARD, "posthog_api_key": "phx_bad_key"})
+    assert response.status_code == 400 and "Could not connect to PostHog" in response.json()["detail"]
+    assert db.scalar(select(User).where(User.email == "ali@shop.test")) is None
+    assert db.scalar(select(Client).where(Client.name == "ali@shop.test")) is None
+
+
+def test_onboarding_refuses_weak_passwords_and_existing_emails(api, db, world):
+    admin = api("admin@agency.test")
+    assert admin.post("/api/admin/users", json={**ONBOARD, "password": "short"}).status_code == 400
+    assert admin.post("/api/admin/users", json={**ONBOARD, "email": "alice@a.test"}).status_code == 409
+    assert admin.post("/api/admin/users", json={**ONBOARD, "email": "not-an-email"}).status_code == 400

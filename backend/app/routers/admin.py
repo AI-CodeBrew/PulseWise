@@ -28,7 +28,8 @@ from app.models import Alert, AuditLog, Client, ClientMember, Invoice, User, Web
 from app.params import CursorParam, LimitParam, decode_cursor, encode_cursor
 from app.posthog_admin import InvalidPostHogHost, check_connection, validate_host
 from app.posthog_client import AnalyticsError, PostHogClient
-from app.security import VIEWAS_TOKEN, create_token, encrypt_secret
+from app.emailer import email_configured
+from app.security import VIEWAS_TOKEN, create_token, encrypt_secret, hash_password, password_problem
 from app.services.health import website_health
 from app.snippet import build_snippet, ingestion_host
 
@@ -102,6 +103,25 @@ class UserPatch(BaseModel):
 
 class ViewAsIn(BaseModel):
     client_id: uuid.UUID
+
+
+class OnboardIn(BaseModel):
+    """Everything needed to give one customer a working login: who they are, their password, their PostHog keys."""
+
+    email: str = Field(min_length=3, max_length=320)
+    name: str = Field(default="", max_length=200)
+    password: str = Field(min_length=1, max_length=1024)  # chosen by the admin; shown/sent to the user once
+    business_name: str | None = Field(default=None, max_length=200)  # defaults to the person's name
+    phone: str | None = Field(default=None, max_length=50)
+    website_name: str = Field(min_length=1, max_length=200)
+    domain: str | None = Field(default=None, max_length=255)
+    posthog_host: str = Field(max_length=255)
+    posthog_project_id: int = Field(gt=0, lt=10**12)
+    posthog_org_id: str | None = Field(default=None, max_length=64)
+    posthog_project_token: str | None = Field(default=None, max_length=100)
+    posthog_api_key: str = Field(min_length=8, max_length=512)
+    send_email: bool = True  # email the login details to the user
+    skip_check: bool = False
 
 
 # ------------------------------------------------------------------ small helpers
@@ -515,6 +535,70 @@ def remove_member(client_id: uuid.UUID, user_id: uuid.UUID, request: Request, ad
           details={"client_id": str(client_id)})
     db.commit()
     return {"ok": True}
+
+
+@router.post("/users", status_code=201, summary="Add a customer in one step: login + password + their PostHog keys")
+async def onboard_user(body: OnboardIn, request: Request, background: BackgroundTasks, admin: AdminUser, db: DbSession):
+    """Creates the client, the login (with the password the admin chose), and the website with its PostHog
+    connection, then (optionally) emails the login details. Nothing is saved unless ALL of it is valid,
+    including a live test of the PostHog key."""
+    try:
+        email = accounts.normalize_email(body.email)
+    except accounts.AccountError as exc:
+        raise _bad_request(str(exc)) from None
+    if accounts.find_user(db, email):
+        raise HTTPException(status_code=409, detail=f"{email} already has an account. Add their website from the client's page instead.")
+    problem = password_problem(body.password)
+    if problem:
+        raise _bad_request(problem)
+    try:
+        host = validate_host(body.posthog_host)
+    except InvalidPostHogHost as exc:
+        raise _bad_request(str(exc)) from None
+    api_key = body.posthog_api_key.strip()
+    token = _clean(body.posthog_project_token)
+    if not body.skip_check:
+        result = await _verify_connection(host, body.posthog_project_id, api_key)
+        token = token or result.get("project_token")
+
+    name = _clean(body.name) or ""
+    client = Client(name=_clean(body.business_name) or name or email, contact_email=email, phone=_clean(body.phone))
+    db.add(client)
+    db.flush()
+    user = accounts.create_user(db, email, name)
+    user.password_hash = hash_password(body.password)
+    db.add(ClientMember(client_id=client.id, user_id=user.id, role="owner"))
+    website = Website(
+        client_id=client.id,
+        name=body.website_name.strip(),
+        domain=_clean(body.domain),
+        posthog_host=host,
+        posthog_project_id=body.posthog_project_id,
+        posthog_org_id=_clean(body.posthog_org_id),
+        posthog_project_token=token,
+        posthog_api_key_encrypted=encrypt_secret(api_key),
+    )
+    db.add(website)
+    db.flush()
+    # Never log the password or the key: only that they were set.
+    audit(db, "admin.customer_onboarded", actor_id=admin.id, target_type="user", target_id=user.id, ip=client_ip(request),
+          details={"client_id": str(client.id), "website_id": str(website.id), "project_id": website.posthog_project_id,
+                   "emailed": body.send_email})
+    db.commit()
+
+    emailed = False
+    if body.send_email:
+        emailed = email_configured()  # (when it isn't, the details are printed to the server log instead)
+        background.add_task(accounts.send_login_email, user, body.password, client.name)
+    return {
+        "user_id": str(user.id),
+        "client_id": str(client.id),
+        "website_id": str(website.id),
+        "email": user.email,
+        "login_url": f"{settings.frontend_url}/login",
+        "emailed": emailed,
+        "token_found": token is not None,
+    }
 
 
 @router.post("/users/{user_id}/invite-link", summary="A fresh 'set your password' link for a user")

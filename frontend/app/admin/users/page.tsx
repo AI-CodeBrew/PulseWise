@@ -27,7 +27,15 @@ export default function UsersPage() {
 
   return (
     <>
-      <PageHeader title="Users" description="Everyone who can log in." />
+      <PageHeader
+        title="Users"
+        description="Everyone who can log in."
+        action={
+          <Link href="/admin/users/new" className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90">
+            + Add user
+          </Link>
+        }
+      />
       <div className="mb-4 max-w-xs">
         <TextField label="Search" placeholder="Name or email…" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>

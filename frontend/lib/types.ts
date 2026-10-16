@@ -325,6 +325,16 @@ export interface SnippetInfo {
   needs_token: boolean;
 }
 
+export interface OnboardResult {
+  user_id: string;
+  client_id: string;
+  website_id: string;
+  email: string;
+  login_url: string;
+  emailed: boolean;
+  token_found: boolean;
+}
+
 export interface InviteResult {
   user_id: string;
   email: string;

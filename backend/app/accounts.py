@@ -72,6 +72,20 @@ def send_invite_email(user: User, link: str, client_name: str, invited_by: str |
     )
 
 
+def send_login_email(user: User, password: str, client_name: str) -> None:
+    """The login details an admin set up for a customer (the admin chose the password)."""
+    send_email(
+        user.email,
+        f"Your {client_name} analytics dashboard login",
+        f"Hi {user.name or 'there'},\n\n"
+        f"Your website analytics dashboard is ready.\n\n"
+        f"Log in here: {settings.frontend_url}/login\n"
+        f"Email: {user.email}\n"
+        f"Password: {password}\n\n"
+        f"Please change your password after logging in (Account page).\n",
+    )
+
+
 def parse_uuid(value: str) -> uuid.UUID | None:
     try:
         return uuid.UUID(value)
