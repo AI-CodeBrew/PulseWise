@@ -25,6 +25,14 @@ const BLOCKS_PER_REQUEST = 3; // the backend allows up to 4
 const PARALLEL_REQUESTS = 3; // PostHog allows 3 queries at once per project
 const MAX_BLOCKS = 150; // refuse absurdly long recordings instead of freezing the browser
 
+// Rules added to the replayed page. A replay has no JavaScript, so anything a page's scripts used to reveal stays hidden.
+// Shopify themes (Dawn and every theme built on it) fade/slide their sections in with `animate--*` classes, and the
+// recording stores that animation rule broken (the browser can't write `animation: var(--x)` back out as text), so
+// products, banners and whole sections would stay almost invisible (opacity .01). Show them in their final state.
+const REPLAY_STYLE_RULES = [
+  ".scroll-trigger.animate--fade-in, .scroll-trigger.animate--slide-in, .scroll-trigger.animate--zoom-in, .scroll-trigger.animate--ambient { opacity: 1 !important; transform: none !important; animation: none !important; }",
+];
+
 type Phase = { name: "loading"; done: number; total: number } | { name: "ready" } | { name: "error"; message: string };
 
 export function RecordingPlayer({ eventsPath, blocks }: { eventsPath: string; blocks: RecordingBlock[] }) {
@@ -91,6 +99,7 @@ export function RecordingPlayer({ eventsPath, blocks }: { eventsPath: string; bl
           skipInactive: true, // jump over the stretches where the visitor did nothing
           speedOption: [1, 2, 4, 8],
           showController: true,
+          insertStyleRules: REPLAY_STYLE_RULES,
         },
       });
       setPhase({ name: "ready" });

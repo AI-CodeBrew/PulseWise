@@ -166,26 +166,48 @@ def _is_not_for_playback(event: dict[str, Any]) -> bool:
     return False
 
 
-def _decompress_event(event: dict[str, Any]) -> dict[str, Any] | None:
-    """posthog-js gzips large event data and marks it with `cv` ("compression version").
+# The parts of a "page changed" (mutation) event that posthog-js compresses one by one.
+MUTATION_FIELDS = ("adds", "removes", "texts", "attributes")
 
-    The compressed bytes arrive as a string with one character per byte (latin-1),
-    so: string -> bytes -> gunzip -> UTF-8 JSON. We unpack it here, so the browser's
-    player gets ordinary rrweb events.
+
+class _TooBig(Exception):
+    """A piece of a recording decompresses to more than we allow."""
+
+
+def _gunzip_json(packed: str) -> Any:
+    """One compressed piece: string (one character per byte, latin-1) -> bytes -> gunzip -> UTF-8 JSON."""
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)  # 16+ = gzip header
+    unpacked = decompressor.decompress(packed.encode("latin-1"), MAX_DECOMPRESSED_EVENT_BYTES)
+    if decompressor.unconsumed_tail:  # more data than allowed
+        raise _TooBig
+    return json.loads(unpacked.decode("utf-8"))
+
+
+def _decompress_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """posthog-js gzips large event data and marks it with `cv` ("compression version"). Two shapes exist:
+
+    1. the WHOLE `data` is one compressed string (the page snapshot and most other events);
+    2. for "page changed" (mutation) events, `data` stays an object but its `adds`, `removes`, `texts` and
+       `attributes` are compressed separately. (Missing this second shape was a real bug: everything that
+       appeared on the page AFTER the first snapshot, such as a store's product grid, never showed in our replay.)
+
+    We unpack both here, so the browser's player gets ordinary rrweb events.
     """
     data = event.get("data")
-    if "cv" not in event or not isinstance(data, str):
+    if "cv" not in event:
         return event
     try:
-        raw = data.encode("latin-1")
-        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)  # 16+ = gzip header
-        unpacked = decompressor.decompress(raw, MAX_DECOMPRESSED_EVENT_BYTES)
-        if decompressor.unconsumed_tail:  # more data than allowed
-            log.warning("Skipping a recording event that decompresses to more than the limit")
-            return None
         new_event = {k: v for k, v in event.items() if k not in ("cv", "data")}
-        new_event["data"] = json.loads(unpacked.decode("utf-8"))
+        if isinstance(data, str):
+            new_event["data"] = _gunzip_json(data)
+        elif isinstance(data, dict):
+            new_event["data"] = {k: (_gunzip_json(v) if k in MUTATION_FIELDS and isinstance(v, str) else v) for k, v in data.items()}
+        else:
+            return event
         return new_event
+    except _TooBig:
+        log.warning("Skipping a recording event that decompresses to more than the limit")
+        return None
     except (UnicodeError, zlib.error, ValueError):
         log.warning("Skipping a recording event that could not be decompressed")
         return None

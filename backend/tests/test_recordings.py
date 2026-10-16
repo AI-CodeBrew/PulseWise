@@ -143,3 +143,44 @@ def test_an_unknown_recording_is_a_plain_404(api, world, monkeypatch):
     for path in (f"/recordings/{RECORDING}", f"/recordings/{RECORDING}/events?start=0&end=0"):
         response = alice.get(f"/api/websites/{world.site_a.id}{path}")
         assert response.status_code == 404 and "Recording not found" in response.json()["detail"]
+
+
+# ------------------------------------------------------------------ "page changed" events (compressed field by field)
+
+
+def mutation_event(timestamp: int = 10, **fields) -> dict:
+    """What posthog-js sends for a page change: `data` stays an object, but adds/removes/texts/attributes are each gzipped."""
+    data = {"source": 0, "isAttachIframe": None, **{k: gzip_to_posthog_string(v) for k, v in fields.items()}}
+    return {"type": 3, "timestamp": timestamp, "cv": "2024-10", "data": data}
+
+
+def test_mutations_compressed_field_by_field_are_unpacked():
+    """A real bug: the replay of a store's product grid stayed empty because these were passed on still compressed."""
+    adds = [{"parentId": 5, "nextId": None, "node": {"type": 2, "tagName": "li", "attributes": {"class": "grid__item"}, "childNodes": [{"type": 3, "textContent": "Pink Salt Gua Sha – Rs 2,500 ✓"}], "id": 77}}]
+    texts = [{"id": 9, "value": "6 products"}]
+    wire = line(mutation_event(adds=adds, removes=[], texts=texts, attributes=[]))
+    assert json.loads(wire)[1]["data"]["adds"] != adds  # really compressed on the wire
+    [parsed] = parse_snapshot_lines(wire)
+    assert parsed["data"] == {"source": 0, "isAttachIframe": None, "adds": adds, "removes": [], "texts": texts, "attributes": []}
+    assert "cv" not in parsed
+
+
+def test_a_mutation_with_only_some_fields_compressed_keeps_the_rest():
+    event = {"type": 3, "timestamp": 3, "cv": "2024-10", "data": {"source": 0, "adds": gzip_to_posthog_string([{"id": 1}]), "removes": [{"parentId": 2, "id": 3}], "texts": [], "attributes": []}}
+    [parsed] = parse_snapshot_lines(line(event))
+    assert parsed["data"]["adds"] == [{"id": 1}] and parsed["data"]["removes"] == [{"parentId": 2, "id": 3}]
+
+
+def test_a_broken_or_oversized_mutation_field_drops_just_that_event():
+    bomb = {"type": 3, "timestamp": 1, "cv": "2024-10", "data": {"source": 0, "adds": gzip_to_posthog_string("0" * (MAX_DECOMPRESSED_EVENT_BYTES + 1024)), "removes": [], "texts": [], "attributes": []}}
+    broken = {"type": 3, "timestamp": 2, "cv": "2024-10", "data": {"source": 0, "adds": "not gzip at all", "removes": [], "texts": [], "attributes": []}}
+    fine = line(mutation_event(timestamp=3, adds=[{"id": 1}], removes=[], texts=[], attributes=[]))
+    events = parse_snapshot_lines("\n".join([line(bomb), line(broken), fine]))
+    assert [e["timestamp"] for e in events] == [3]
+
+
+def test_other_fields_of_a_mutation_are_never_unpacked():
+    """Only the four known fields are treated as compressed: a normal string elsewhere must stay as it is."""
+    event = {"type": 3, "timestamp": 4, "cv": "2024-10", "data": {"source": 0, "adds": [], "removes": [], "texts": [], "attributes": [], "note": "plain"}}
+    [parsed] = parse_snapshot_lines(line(event))
+    assert parsed["data"]["note"] == "plain"
