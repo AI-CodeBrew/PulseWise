@@ -12,6 +12,7 @@ import { Icon, type IconName } from "./icons";
 // Paths are relative to the current website: "" = /sites/<id>, "/pages" = /sites/<id>/pages
 const NAV: { path: string; label: string; icon: IconName }[] = [
   { path: "", label: "Overview", icon: "overview" },
+  { path: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { path: "/pages", label: "Pages", icon: "pages" },
   { path: "/sources", label: "Traffic sources", icon: "sources" },
   { path: "/audience", label: "Audience", icon: "audience" },

@@ -37,7 +37,7 @@ def find_website_access(
         .join(Client, Client.id == Website.client_id)
         .outerjoin(
             ClientMember,
-            and_(ClientMember.client_id == Website.client_id, ClientMember.user_id == user.id),
+            and_(ClientMember.client_id == Website.client_id, ClientMember.user_id == user.id, ClientMember.suspended.is_(False)),
         )
         .where(Website.id == website_id, Website.is_active.is_(True))
     ).first()
@@ -68,7 +68,7 @@ def accessible_websites(db: Session, user: User, view_as_client_id: uuid.UUID | 
     else:
         query = query.add_columns(ClientMember.role).join(
             ClientMember,
-            and_(ClientMember.client_id == Client.id, ClientMember.user_id == user.id),
+            and_(ClientMember.client_id == Client.id, ClientMember.user_id == user.id, ClientMember.suspended.is_(False)),
         )
         rows = db.execute(query).all()
 

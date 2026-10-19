@@ -1,6 +1,6 @@
 // Phase 8: weekly reports (made by the admin here, normally by the Monday job), the client's Settings page
 // (business details, logo, team) and the pieces of the admin panel that go with them.
-import { creds, ids, launch, out, suite } from "../lib.mjs";
+import { API, creds, ids, launch, out, suite } from "../lib.mjs";
 
 const t = suite("Weekly reports, settings and team");
 const admin = await launch({ out, name: "admin", height: 1100 });
@@ -15,7 +15,7 @@ for (const [b, who, home] of [[owner, creds.owner, ids.demoSite], [viewer, creds
   await b.login(...who);
   await b.waitForPath(`/sites/${home}`);
 }
-const json = (b, path) => b.eval(`fetch(${JSON.stringify("http://localhost:8000" + path)}, { credentials: "include" }).then((r) => r.json())`);
+const json = (b, path) => b.eval(`fetch(${JSON.stringify(API + path)}, { credentials: "include" }).then((r) => r.json())`);
 
 // 1. The admin makes last week's report
 await admin.goto("/admin/jobs");
@@ -54,16 +54,13 @@ t.check("  ...and the server refuses them too", (await viewer.apiStatus(`/api/cl
 await owner.goto(`/sites/${ids.demoSite}/settings`);
 await owner.waitForText("Your business");
 await owner.waitFor(`!!document.querySelector("form input[type=text], form input:not([type])")`);
+t.check("the page has no time zone, report language or logo settings", await owner.eval(`!document.body.innerText.includes("Time zone") && !document.body.innerText.includes("Report language") && !document.body.innerText.includes("Your logo") && !document.querySelector("input[type=file]")`));
 await owner.fillLabel("Business name", "Demo Shop E2E");
-await owner.selectLabel("Time zone", "Dubai");
-await owner.selectLabel("Report language", "Roman Urdu");
 await owner.clickText("Save changes");
 t.check("business details can be saved", await owner.waitForText("Saved."));
 const saved = await json(owner, `/api/clients/${ids.demoClient}/settings`);
-t.check("  ...and are stored", saved.name === "Demo Shop E2E" && saved.timezone === "Asia/Dubai" && saved.report_language === "roman_ur", JSON.stringify(saved));
+t.check("  ...and are stored", saved.name === "Demo Shop E2E" && saved.timezone === "Asia/Karachi" && saved.report_language === "en", JSON.stringify(saved));
 await owner.fillLabel("Business name", "Demo Shop");
-await owner.selectLabel("Time zone", "Karachi");
-await owner.selectLabel("Report language", "English");
 await owner.clickText("Save changes");
 await owner.waitFor(`!!document.body.innerText.match(/Saved\\./)`);
 t.check("  ...and can be put back", (await json(owner, `/api/clients/${ids.demoClient}/settings`)).name === "Demo Shop");
@@ -83,28 +80,6 @@ await owner.clickText("Save changes");
 await owner.waitFor(`!!document.body.innerText.match(/Saved\./)`);
 t.check("  ...and clearing the number switches it off", await owner.waitFor(`true`) && (await json(owner, `/api/clients/${ids.demoClient}/settings`)).whatsapp_reports_enabled === false);
 
-// 5. Settings: logo
-const pickFile = (b, name, type, base64) => b.eval(`(() => {
-  const bytes = Uint8Array.from(atob(${JSON.stringify(base64)}), (c) => c.charCodeAt(0));
-  const dt = new DataTransfer();
-  dt.items.add(new File([bytes], ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} }));
-  const input = document.querySelector("input[type=file]");
-  input.files = dt.files;
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-})()`);
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-await pickFile(owner, "logo.svg", "image/svg+xml", btoa('<svg xmlns="http://www.w3.org/2000/svg"></svg>'));
-t.check("a logo that isn't PNG/JPEG/WebP is refused with a plain message", await owner.waitForText("Please choose a PNG, JPEG or WebP picture."));
-await pickFile(owner, "logo.png", "image/png", PNG);
-t.check("a PNG logo can be uploaded", await owner.waitFor(`document.body.innerText.includes("Replace logo")`, 20000));
-t.check("  ...and appears in the top bar", await owner.waitFor(`!!document.querySelector("header img[src*='/logo']")`, 20000));
-const logo = await owner.eval(`fetch(document.querySelector("header img").src, { credentials: "include" }).then((r) => ({ status: r.status, type: r.headers.get("content-type") }))`);
-t.check("  ...and is served as an image", logo.status === 200 && logo.type === "image/png", JSON.stringify(logo));
-t.check("another client can't fetch it", (await otherOwner.apiStatus(`/api/clients/${ids.demoClient}/logo`)) === 404);
-await owner.shot("settings");
-await owner.clickText("Remove");
-t.check("the logo can be removed", await owner.waitFor(`document.body.innerText.includes("Upload logo") && !document.querySelector("header img")`, 20000));
-
 // 6. Settings: team
 await owner.eval(`window.confirm = () => true`);
 await owner.fillLabel("Email", "newbie@demo.test");
@@ -118,9 +93,35 @@ await owner.fillLabel("Email", "other@other.test");
 await owner.clickText("Add person");
 t.check("adding someone who already has an account makes NO link (nobody can take over their account)", await owner.waitFor(`document.body.innerText.includes("other@other.test now has access.") && document.body.innerText.includes("They already have an account") && !document.body.innerText.includes("/reset-password?token=")`, 20000));
 
+// A login created by the owner, with a password (no email, no link)
+await owner.fillLabel("Email", "gmailuser@demo.test");
+await owner.fillLabel("Password for them (optional)", "Gmail-User-Pass-1");
+await owner.clickText("Add person");
+t.check("with a password, the owner gets the login details to hand over (no link)", await owner.waitFor(`document.body.innerText.includes("gmailuser@demo.test now has access.") && document.body.innerText.includes("Password: Gmail-User-Pass-1") && !document.body.innerText.includes("/reset-password?token=")`, 20000));
+const person = await launch({ out, name: "person" });
+await person.login("gmailuser@demo.test", "Gmail-User-Pass-1");
+t.check("that person can log in with the password and sees the dashboard", await person.waitForPath(`/sites/${ids.demoSite}`));
+
+await owner.eval(`document.querySelector('button[aria-label="Suspend gmailuser@demo.test"]').click()`);
+t.check("suspending marks them as suspended on the list", await owner.waitFor(`document.body.innerText.includes("Suspended") && !!document.querySelector('button[aria-label="Activate gmailuser@demo.test"]')`, 20000));
+t.check("  ...and they are locked out at once (no websites, no data)", (await json(person, "/api/auth/me")).websites.length === 0 && (await person.apiStatus(`/api/websites/${ids.demoSite}/overview`)) === 404);
+await owner.eval(`document.querySelector('button[aria-label="Activate gmailuser@demo.test"]').click()`);
+t.check("activating lets them back in", await owner.waitFor(`!document.body.innerText.includes("Suspended")`, 20000) && (await json(person, "/api/auth/me")).websites.length === 1);
+
+await owner.eval(`document.querySelector('button[aria-label="Set a new password for gmailuser@demo.test"]').click()`);
+await owner.fillLabel("New password", "Changed-Pass-2");
+await owner.clickText("Save password");
+t.check("the owner can set a new password for them", await owner.waitForText("New password set for gmailuser@demo.test"));
+t.check("  ...which logs the old session out", (await person.apiStatus("/api/auth/me")) === 401);
+await person.login("gmailuser@demo.test", "Changed-Pass-2");
+t.check("  ...and the new password works", await person.waitForPath(`/sites/${ids.demoSite}`));
+await owner.eval(`document.querySelector('button[aria-label="Remove gmailuser@demo.test"]').click()`);
+t.check("they can be removed", await owner.waitFor(`!document.querySelector('select[aria-label="Role of gmailuser@demo.test"]')`, 20000));
+t.check("  ...and then have no access", (await json(person, "/api/auth/me")).websites.length === 0);
+
 // The only owner can't step down (an account always keeps an owner)...
 await owner.fill('select[aria-label="Role of owner@demo.test"]', "viewer");
-t.check("the only owner can't step down", await owner.waitForText("An account needs at least one owner."));
+t.check("the only owner can't step down", await owner.waitForText("An account needs at least one active owner."));
 // ...but another person can be promoted, and everyone can be removed again.
 await owner.fill('select[aria-label="Role of newbie@demo.test"]', "owner");
 t.check("a role can be changed", await owner.waitFor(`document.querySelector('select[aria-label="Role of newbie@demo.test"]').value === "owner"`, 20000));
@@ -138,4 +139,4 @@ await phone.goto(`/sites/${ids.demoSite}/settings`);
 await phone.waitFor(`document.body.innerText.includes("People with access")`, 30000);
 t.check("the settings page fits a phone", await phone.eval(`document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1`));
 
-t.finish(admin, owner, viewer, otherOwner, phone);
+t.finish(admin, owner, viewer, otherOwner, phone, person);

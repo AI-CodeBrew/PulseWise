@@ -1,5 +1,5 @@
 // Recording playback inside the dashboard.
-import { creds, ids, launch, out, sleep, suite } from "../lib.mjs";
+import { API, creds, ids, launch, out, sleep, suite } from "../lib.mjs";
 
 const t = suite("Recording playback");
 const b = await launch({ out, name: "main", height: 1000 });
@@ -8,7 +8,7 @@ await b.login(...creds.owner);
 await b.waitForPath(`/sites/${ids.demoSite}`);
 
 // Pick a short recording (a long one can take a minute to download).
-const listing = await b.eval(`fetch("http://localhost:8000/api/websites/${ids.demoSite}/recordings?days=90&limit=50", { credentials: "include" })
+const listing = await b.eval(`fetch("${API}/api/websites/${ids.demoSite}/recordings?days=90&limit=50", { credentials: "include" })
   .then(async (r) => ({ status: r.status, body: await r.json() }))`);
 if (!listing.body.results) console.log("recordings request failed:", listing.status, JSON.stringify(listing.body));
 const shortest = (listing.body.results ?? []).filter((x) => x.duration >= 15).sort((a, c) => a.duration - c.duration)[0] ?? null;

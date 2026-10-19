@@ -170,7 +170,7 @@ def test_the_team_is_listed(api, world):
     team = api("alice@a.test").get(url(world.client_a, "/team")).json()
     assert [(m["email"], m["role"], m["is_you"]) for m in team["members"]] == [("alice@a.test", "owner", True), ("vera@a.test", "viewer", False)]
     assert team["can_invite"] is True and team["max_members"] is None
-    assert "password" not in str(team).lower()
+    assert "argon2" not in str(team) and "password_hash" not in str(team)  # no hashes, ever
 
 
 def test_inviting_a_new_person_creates_an_account_and_a_link(api, db, world, monkeypatch):

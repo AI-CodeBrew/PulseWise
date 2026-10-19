@@ -31,7 +31,7 @@ def owner_client(db: DbSession, user: CurrentUser, client_id: uuid.UUID, view_as
     if user.is_admin and view_as_client_id == client_id:  # an admin looking "as the client's owner"
         return client
     member = db.get(ClientMember, (client_id, user.id))
-    if member is None:
+    if member is None or member.suspended:
         raise HTTPException(status_code=404, detail="Not found.")  # same answer as "doesn't exist"
     if member.role != "owner":
         raise HTTPException(status_code=403, detail="Only the account owner can see billing.")

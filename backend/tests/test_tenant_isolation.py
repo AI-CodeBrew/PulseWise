@@ -25,7 +25,7 @@ WEBSITE_ROUTES = [
     path for method, path in ALL_ENDPOINTS if method == "GET" and path.startswith("/api/websites/{website_id}")
 ]
 # The routes that always fetch live data from PostHog (weekly reports and sales mostly read our own database).
-POSTHOG_ROUTES = [path for path in WEBSITE_ROUTES if "/reports" not in path and "/sales" not in path]
+POSTHOG_ROUTES = [path for path in WEBSITE_ROUTES if "/reports" not in path and "/sales" not in path and "/dashboard" not in path]
 
 # Endpoints that are open on purpose (you must be able to log in without being logged in).
 PUBLIC_ENDPOINTS = {
@@ -47,7 +47,7 @@ def url(path_template: str, website_id) -> str:
 
 def test_all_analytics_and_report_endpoints_are_website_scoped():
     assert len(POSTHOG_ROUTES) == 15, POSTHOG_ROUTES  # the 15 analytics endpoints
-    assert len(WEBSITE_ROUTES) == 20, WEBSITE_ROUTES  # + 3 weekly-report endpoints + 2 sales endpoints
+    assert len(WEBSITE_ROUTES) == 22, WEBSITE_ROUTES  # + 3 weekly-report + 2 sales + 2 dashboard-tile GET endpoints
 
 
 def test_every_non_public_api_endpoint_requires_login(api, world):

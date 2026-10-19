@@ -577,6 +577,10 @@ export interface TeamMember {
   name: string;
   role: "owner" | "viewer";
   is_you: boolean;
+  /** Kept on the team, but locked out of this account for now. */
+  suspended: boolean;
+  /** The owner may set a new password for this person (only people who belong to this account alone). */
+  can_set_password: boolean;
   last_login_at: string | null;
 }
 
@@ -607,4 +611,37 @@ export interface ReportSales {
   revenue: Metric;
   average_order_value: Metric;
   top_product: { title: string; units: number; revenue: number } | null;
+}
+
+// ---- My dashboard (the tiles on the Overview page) ----
+
+export type TileKind = "number" | "decimal" | "percent" | "duration" | "text";
+
+export interface TileInfo {
+  key: string;
+  title: string;
+  description: string;
+  kind: TileKind;
+  group: string;
+}
+
+/** GET /dashboard/tiles/catalog: everything a person can choose from. */
+export interface TileCatalog {
+  tiles: TileInfo[];
+  /** The website's own tracked events. Each one can be a tile, as `event:<name>:7` or `event:<name>:30`. */
+  events: { event: string; count: number }[];
+}
+
+export interface TileValue {
+  key: string;
+  title: string;
+  description: string;
+  kind: TileKind;
+  value: number | string;
+}
+
+/** GET /dashboard/tiles: `configured: false` = this person never chose, so we ask first. */
+export interface MyTiles {
+  configured: boolean;
+  tiles: TileValue[];
 }

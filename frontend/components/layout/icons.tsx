@@ -2,6 +2,7 @@
 
 const PATHS: Record<string, string[]> = {
   overview: ["M4 4h6v6H4z", "M14 4h6v6h-6z", "M4 14h6v6H4z", "M14 14h6v6h-6z"],
+  dashboard: ["M5 20V11", "M12 20V4", "M19 20v-6", "M3 20h18"],
   pages: ["M7 3h7l5 5v13H7z", "M14 3v5h5", "M10 13h6", "M10 17h6"],
   sources: ["M4 12h13", "M12 6l6 6-6 6"],
   audience: ["M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18", "M3 12h18", "M12 3c3 3.5 3 14.5 0 18", "M12 3c-3 3.5-3 14.5 0 18"],

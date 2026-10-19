@@ -195,6 +195,7 @@ def member_dict(member: ClientMember) -> dict[str, Any]:
         "email": user.email,
         "name": user.name,
         "role": member.role,
+        "suspended": member.suspended,
         "is_active": user.is_active,
         "last_login_at": _iso(user.last_login_at),
     }

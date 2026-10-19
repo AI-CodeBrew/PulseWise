@@ -11,7 +11,7 @@ const [resetEmail] = creds.resetme; // the password-reset test changes this user
 
 // 1. Logged out -> sent to /login, and brought back afterwards
 await b.goto(`/sites/${ids.demoSite}/sessions?days=7`);
-t.check("logged-out visitor is sent to /login", await b.waitForPath("/login"), await b.path());
+t.check("logged-out visitor is sent to /login", await b.waitForPath("/login"), (await b.path()) + " :: " + (await b.text()).split("\n").join(" | ").slice(0, 200));
 t.check("  ...remembering the page they wanted", (await b.path()).includes("next=%2Fsites%2F"));
 
 // 2. Wrong password

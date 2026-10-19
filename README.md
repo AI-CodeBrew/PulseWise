@@ -331,6 +331,7 @@ The details of every phase (what, why, limits) are in [docs/ROADMAP.md](docs/ROA
 | 8 Reports | Weekly report (email + PDF + page) with an AI or rule-based summary in English / Roman Urdu / Urdu; client Settings (name, logo, time zone, team) | Client → Weekly reports / Settings |
 | 9 Shopify | Orders copied from the client's Shopify store, shown as a "Your store" section in the weekly report (the client Sales page was removed; the data API is still there) | Admin → website → Shopify store; client → Weekly reports |
 | 10 Payments, WhatsApp | "Pay online" wiring for a payment gateway (no gateway built in); weekly report on WhatsApp | Admin → Settings; client → Settings |
+| After 10: Dashboard | A Dashboard page (menu item under Overview) with tiles each person chooses (asked first), including tiles for the website's own tracked events; team logins with a password, suspend / activate / remove | Client → Dashboard, Settings |
 
 ### Everything in `backend/.env` (all optional except the first group)
 
@@ -387,3 +388,5 @@ No custom domain needed. The browser only talks to the Vercel site, and Vercel f
 Changing a `NEXT_PUBLIC_*` value needs a new Vercel deploy. Keep ONE Render instance (the background jobs run inside it), and note Render's free plan sleeps, which pauses the jobs.
 
 > If port 3000 is already used by another program, run the browser tests on another port: `$env:E2E_FRONTEND_PORT = "3100"; powershell -File e2e\run.ps1`.
+
+> If your own backend already uses port 8000, run the browser tests on another API port too: `$env:E2E_BACKEND_PORT = "8100"` (together with `E2E_FRONTEND_PORT`).

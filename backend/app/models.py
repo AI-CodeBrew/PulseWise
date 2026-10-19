@@ -127,6 +127,8 @@ class ClientMember(Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
     )
     role: Mapped[str] = mapped_column(String(20))  # "owner" or "viewer"
+    # Suspended = kept on the team but locked out of THIS client (their other clients, if any, are unaffected).
+    suspended: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = _created_at()
 
     client: Mapped[Client] = relationship(back_populates="members")
@@ -464,3 +466,20 @@ class ShopOrderItem(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))  # price after discounts
 
     order: Mapped[ShopOrder] = relationship(back_populates="items")
+
+
+# ------------------------------------------------------------------ "My dashboard" tiles
+
+
+class DashboardPref(Base):
+    """Which tiles a person chose for the Overview dashboard of one website (see app/services/tiles.py).
+
+    One row per (user, website): everyone has their own view. No row yet = "never chose": the page asks first.
+    """
+
+    __tablename__ = "dashboard_prefs"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    website_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("websites.id", ondelete="CASCADE"), primary_key=True)
+    tiles: Mapped[list[str]] = mapped_column(JsonType)  # tile keys in the order shown
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, server_default=func.now())

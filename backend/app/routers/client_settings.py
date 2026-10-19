@@ -19,6 +19,7 @@ from app import accounts, whatsapp
 from app.audit import audit
 from app.billing.service import BillingError, check_member_limit, has_feature
 from app.deps import CurrentUser, DbSession, ViewAsClientId, client_ip
+from app.security import hash_password, password_problem
 from app.models import Client, ClientMember, User
 from app.routers.billing import owner_client
 
@@ -129,11 +130,16 @@ def delete_logo(client_id: uuid.UUID, user: CurrentUser, db: DbSession, view_as:
     return {"ok": True, "has_logo": False}
 
 
+def _active_member(db, client_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    member = db.get(ClientMember, (client_id, user_id))
+    return member is not None and not member.suspended
+
+
 @router.get("/logo", summary="The client's logo (any member of the client)")
 def get_logo(client_id: uuid.UUID, user: CurrentUser, db: DbSession, view_as: ViewAsClientId):
     client = db.get(Client, client_id)
     allowed = client is not None and (
-        (user.is_admin and (view_as is None or view_as == client_id)) or db.get(ClientMember, (client_id, user.id)) is not None
+        (user.is_admin and (view_as is None or view_as == client_id)) or _active_member(db, client_id, user.id)
     )
     if not allowed or client is None or client.logo_data is None:
         raise HTTPException(status_code=404, detail="No logo.")
@@ -155,14 +161,37 @@ class InviteIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     name: str = Field(default="", max_length=200)
     role: Role = "viewer"
+    # Optional. With a password the owner creates the login themselves and hands it over (no email needed).
+    # Without one, a brand-new person gets a one-time "choose your password" link instead.
+    password: str | None = Field(default=None, max_length=1024)
 
 
-class RolePatch(BaseModel):
-    role: Role
+class MemberPatch(BaseModel):
+    role: Role | None = None
+    suspended: bool | None = None  # True = lock them out for now (they stay on the list), False = let them back in
+
+
+class PasswordIn(BaseModel):
+    password: str = Field(max_length=1024)
 
 
 def _owner_count(db, client_id: uuid.UUID) -> int:
-    return len(db.scalars(select(ClientMember.user_id).where(ClientMember.client_id == client_id, ClientMember.role == "owner")).all())
+    """Owners who can actually use the account (a suspended owner doesn't count: the account must keep one active owner)."""
+    return len(db.scalars(select(ClientMember.user_id).where(
+        ClientMember.client_id == client_id, ClientMember.role == "owner", ClientMember.suspended.is_(False))).all())
+
+
+def _is_last_active_owner(db, member: ClientMember) -> bool:
+    return member.role == "owner" and not member.suspended and _owner_count(db, member.client_id) <= 1
+
+
+def _can_set_password(db, member: ClientMember, you: User) -> bool:
+    """An owner may set a password only for people who belong to THIS account and nowhere else (and aren't admins).
+    Otherwise an owner could take over a login that also protects another business's data."""
+    person = member.user
+    if person.id == you.id or person.is_admin or not person.is_active:
+        return False
+    return len(db.scalars(select(ClientMember.client_id).where(ClientMember.user_id == person.id)).all()) == 1
 
 
 def _team(db, client: Client, user: User) -> dict:
@@ -173,6 +202,7 @@ def _team(db, client: Client, user: User) -> dict:
     return {
         "members": [
             {"user_id": str(m.user_id), "email": m.user.email, "name": m.user.name, "role": m.role, "is_you": m.user_id == user.id,
+             "suspended": m.suspended, "can_set_password": _can_set_password(db, m, user),
              "last_login_at": m.user.last_login_at.isoformat() if m.user.last_login_at else None}
             for m in sorted(members, key=lambda m: m.user.email)
         ],
@@ -195,11 +225,16 @@ def invite(client_id: uuid.UUID, body: InviteIn, request: Request, background: B
         check_member_limit(db, client.id)
     except BillingError as exc:
         raise HTTPException(status_code=409, detail=f"{exc} Please contact support to upgrade.") from None
+    password = body.password if body.password else None
+    if password is not None and (problem := password_problem(password)):
+        raise HTTPException(status_code=400, detail=problem)
     try:
         person = accounts.find_user(db, body.email)
         created = person is None
         if created:
             person = accounts.create_user(db, body.email, body.name)
+            if password is not None:
+                person.password_hash = hash_password(password)  # the owner chose it: no "set your password" link is needed
     except accounts.AccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     if db.get(ClientMember, (client.id, person.id)):
@@ -207,27 +242,54 @@ def invite(client_id: uuid.UUID, body: InviteIn, request: Request, background: B
         raise HTTPException(status_code=409, detail=f"{person.email} already has access.")
     db.add(ClientMember(client_id=client.id, user_id=person.id, role=body.role))
     audit(db, "client.member_added", actor_id=user.id, target_type="user", target_id=person.id, ip=client_ip(request),
-          details={"client_id": str(client.id), "role": body.role, "new_user": created})
+          details={"client_id": str(client.id), "role": body.role, "new_user": created, "with_password": created and password is not None})
     db.commit()
 
     # SECURITY: a "set your password" link is only ever created for a brand-new account. For someone who already
     # has an account we never create one: with it, the person inviting could take that account over.
-    link = accounts.invite_link(person) if created else None
+    # (And a password we were given is NEVER applied to an existing account, for the same reason.)
+    password_set = created and password is not None
+    link = accounts.invite_link(person) if created and not password_set else None
     if link:
         background.add_task(accounts.send_invite_email, person, link, client.name, user.name or user.email)
-    return {"email": person.email, "role": body.role, "invite_link": link}
+    return {"email": person.email, "role": body.role, "invite_link": link, "password_set": password_set, "new_account": created}
 
 
-@router.patch("/team/{user_id}", summary="Change someone's role (account owners)")
-def change_role(client_id: uuid.UUID, user_id: uuid.UUID, body: RolePatch, request: Request, user: CurrentUser, db: DbSession, view_as: ViewAsClientId):
+@router.patch("/team/{user_id}", summary="Change someone's role, or suspend / re-activate them (account owners)")
+def change_member(client_id: uuid.UUID, user_id: uuid.UUID, body: MemberPatch, request: Request, user: CurrentUser, db: DbSession, view_as: ViewAsClientId):
     client = owner_client(db, user, client_id, view_as)
     member = db.get(ClientMember, (client.id, user_id))
     if member is None:
         raise HTTPException(status_code=404, detail="That person isn't on this account.")
-    if member.role == "owner" and body.role != "owner" and _owner_count(db, client.id) <= 1:
-        raise HTTPException(status_code=409, detail="An account needs at least one owner.")
-    member.role = body.role
-    audit(db, "client.member_role_changed", actor_id=user.id, target_type="user", target_id=user_id, ip=client_ip(request), details={"client_id": str(client.id), "role": body.role})
+    if body.role is None and body.suspended is None:
+        raise HTTPException(status_code=422, detail="Nothing to change.")
+    if body.suspended is True and user_id == user.id:
+        raise HTTPException(status_code=409, detail="You can't suspend yourself.")
+    if (body.suspended is True or (body.role is not None and body.role != "owner")) and _is_last_active_owner(db, member):
+        raise HTTPException(status_code=409, detail="An account needs at least one active owner.")
+    if body.role is not None:
+        member.role = body.role
+        audit(db, "client.member_role_changed", actor_id=user.id, target_type="user", target_id=user_id, ip=client_ip(request), details={"client_id": str(client.id), "role": body.role})
+    if body.suspended is not None and body.suspended != member.suspended:
+        member.suspended = body.suspended
+        audit(db, "client.member_suspended" if body.suspended else "client.member_unsuspended", actor_id=user.id, target_type="user", target_id=user_id, ip=client_ip(request), details={"client_id": str(client.id)})
+    db.commit()
+    return _team(db, client, user)
+
+
+@router.put("/team/{user_id}/password", summary="Set a new password for someone on this account (account owners)")
+def set_member_password(client_id: uuid.UUID, user_id: uuid.UUID, body: PasswordIn, request: Request, user: CurrentUser, db: DbSession, view_as: ViewAsClientId):
+    client = owner_client(db, user, client_id, view_as)
+    member = db.get(ClientMember, (client.id, user_id))
+    if member is None:
+        raise HTTPException(status_code=404, detail="That person isn't on this account.")
+    if not _can_set_password(db, member, user):
+        raise HTTPException(status_code=409, detail="You can't set a password for this person (it is their own login: they can use \"Forgot your password?\" or the Account page).")
+    if problem := password_problem(body.password):
+        raise HTTPException(status_code=400, detail=problem)
+    member.user.password_hash = hash_password(body.password)
+    member.user.token_version += 1  # they are logged out everywhere and must use the new password
+    audit(db, "client.member_password_set", actor_id=user.id, target_type="user", target_id=user_id, ip=client_ip(request), details={"client_id": str(client.id)})
     db.commit()
     return _team(db, client, user)
 
@@ -238,8 +300,8 @@ def remove_member(client_id: uuid.UUID, user_id: uuid.UUID, request: Request, us
     member = db.get(ClientMember, (client.id, user_id))
     if member is None:
         raise HTTPException(status_code=404, detail="That person isn't on this account.")
-    if member.role == "owner" and _owner_count(db, client.id) <= 1:
-        raise HTTPException(status_code=409, detail="An account needs at least one owner.")
+    if _is_last_active_owner(db, member):
+        raise HTTPException(status_code=409, detail="An account needs at least one active owner.")
     db.delete(member)
     audit(db, "client.member_removed", actor_id=user.id, target_type="user", target_id=user_id, ip=client_ip(request), details={"client_id": str(client.id)})
     db.commit()

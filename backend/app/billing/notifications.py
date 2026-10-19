@@ -37,7 +37,7 @@ def recipients(db: Session, client: Client) -> list[str]:
     emails = [client.contact_email] if client.contact_email else []
     emails += db.scalars(
         select(User.email).join(ClientMember, ClientMember.user_id == User.id)
-        .where(ClientMember.client_id == client.id, ClientMember.role == "owner", User.is_active.is_(True))
+        .where(ClientMember.client_id == client.id, ClientMember.role == "owner", ClientMember.suspended.is_(False), User.is_active.is_(True))
     ).all()
     return list(dict.fromkeys(e for e in emails if e))
 
