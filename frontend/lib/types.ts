@@ -586,48 +586,7 @@ export interface Team {
   can_invite: boolean;
 }
 
-// ---- Sales (Shopify) ----
-
-export interface SalesDay {
-  date: string;
-  orders: number;
-  revenue: number;
-  sessions?: number;
-}
-
-export interface SalesSummary {
-  connected: true;
-  shop_name: string;
-  currency: string | null;
-  last_synced_at: string | null;
-  sync_failing: boolean;
-  period: { start: string; end: string; days: number };
-  revenue: Metric;
-  orders: Metric;
-  average_order_value: Metric;
-  units: Metric;
-  refunded: number;
-  /** null when the website analytics could not be reached (the sales numbers are still right). */
-  traffic: { sessions: Metric; conversion_rate: Metric; revenue_per_session: Metric } | null;
-  daily: SalesDay[];
-  top_products: { title: string; units: number; revenue: number }[];
-}
-
-export type SalesResponse = { connected: false } | SalesSummary;
-
-export interface ShopOrderRow {
-  id: string;
-  name: string;
-  created_at: string;
-  total: number;
-  currency: string;
-  financial_status: string | null;
-  fulfillment_status: string | null;
-  cancelled: boolean;
-  is_test: boolean;
-  items: number;
-  first_item: string | null;
-}
+// ---- Shopify ----
 
 /** GET /api/admin/websites/<id>/shopify */
 export interface AdminShopify {

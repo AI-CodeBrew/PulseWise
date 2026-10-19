@@ -1,7 +1,7 @@
 // Phase 4: login, logout, website access, password reset, phone layout.
 import { readFileSync } from "node:fs";
 
-import { creds, ids, launch, out, sleep, suite } from "../lib.mjs";
+import { BASE, creds, ids, launch, out, sleep, suite } from "../lib.mjs";
 
 const t = suite("Login and access");
 const b = await launch({ out, name: "main" });
@@ -25,7 +25,9 @@ await b.fill("input[type=password]", adminPass);
 await b.submit();
 t.check("admin login returns to the requested page", await b.waitForPath(`/sites/${ids.demoSite}/sessions`), await b.path());
 t.check("  ...keeping ?days=7", (await b.path()).includes("days=7"));
-t.check("sessions table loads real data", await b.waitFor(`document.querySelectorAll("tbody tr").length > 0`, 40000));
+// (The test project only gets traffic now and then, so "the last 7 days" can be empty: an empty list is fine, an error is not.)
+t.check("sessions page loads (rows, or a plain 'no sessions' message)", await b.waitFor(`document.querySelectorAll("tbody tr").length > 0 || document.body.innerText.includes("No sessions in this period")`, 40000));
+t.check("  ...without an error", await b.eval(`!document.body.innerText.includes("Couldn't load this")`));
 await b.goto(`/sites/${ids.demoSite}`);
 t.check("overview shows KPI data", await b.waitFor(`document.body.innerText.includes("Bounce rate") && !document.body.innerText.includes("Couldn't load")`, 40000));
 const groups = await b.eval(`[...document.querySelectorAll("select optgroup")].map((g) => g.label)`);
@@ -65,7 +67,7 @@ await b.fill("input[type=email]", resetEmail);
 await b.submit();
 t.check("forgot-password shows the neutral confirmation", await b.waitForText("If an account exists"));
 await sleep(1500);
-const links = [...readFileSync(process.env.E2E_BACKEND_LOG, "utf8").matchAll(/http:\/\/localhost:3000\/reset-password\?token=\S+/g)].map((m) => m[0]);
+const links = [...readFileSync(process.env.E2E_BACKEND_LOG, "utf8").matchAll(new RegExp(BASE.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&") + "/reset-password\\?token=\\S+", "g"))].map((m) => m[0]);
 t.check("the reset email (printed in the backend log) has a link", links.length > 0);
 async function setPassword(link, password) {
   await b.goto(link);

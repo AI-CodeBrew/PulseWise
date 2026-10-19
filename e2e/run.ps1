@@ -12,6 +12,11 @@ param([switch]$SkipBuild, [string]$Only = "")
 # Native programs (alembic, node...) write progress to stderr: that is not an error. We check exit codes instead.
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
+# The dashboard normally runs on port 3000. If something else already uses it, run the tests on another port:
+#   $env:E2E_FRONTEND_PORT = "3100"; powershell -File e2e\run.ps1
+$fePort = if ($env:E2E_FRONTEND_PORT) { $env:E2E_FRONTEND_PORT } else { "3000" }
+$env:FRONTEND_URL = "http://localhost:$fePort"        # the backend allows exactly this address (CORS, links in emails)
+$env:E2E_FRONTEND_URL = "http://localhost:$fePort"    # where the browser tests go
 $data = Join-Path $PSScriptRoot ".data"
 $py = Join-Path $root "backend\.venv\Scripts\python.exe"
 New-Item -ItemType Directory -Force $data | Out-Null
@@ -53,14 +58,14 @@ $backendLog = Join-Path $data "backend.log"
 Remove-Item $backendLog, (Join-Path $data "backend.out.log") -ErrorAction SilentlyContinue
 Start-Process -FilePath $py -ArgumentList '-m', 'uvicorn', 'app.main:app', '--port', '8000' -WorkingDirectory (Join-Path $root "backend") `
     -RedirectStandardOutput (Join-Path $data "backend.out.log") -RedirectStandardError $backendLog -WindowStyle Hidden
-Start-Process -FilePath "npx.cmd" -ArgumentList 'next', 'start', '-p', '3000' -WorkingDirectory (Join-Path $root "frontend") `
+Start-Process -FilePath "npx.cmd" -ArgumentList 'next', 'start', '-p', $fePort -WorkingDirectory (Join-Path $root "frontend") `
     -RedirectStandardOutput (Join-Path $data "frontend.out.log") -RedirectStandardError (Join-Path $data "frontend.err.log") -WindowStyle Hidden
 $ready = $false
 for ($i = 0; $i -lt 40 -and -not $ready; $i++) {
     Start-Sleep -Milliseconds 500
     try {
         $backendUp = (Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200
-        $frontendUp = (Invoke-WebRequest http://127.0.0.1:3000/login -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200
+        $frontendUp = (Invoke-WebRequest http://127.0.0.1:$fePort/login -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200
         $ready = $backendUp -and $frontendUp
     } catch { $lastError = $_.Exception.Message }
 }

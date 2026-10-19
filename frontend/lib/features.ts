@@ -17,5 +17,4 @@ export const NAV_FEATURE: Record<string, FeatureName | undefined> = {
   "/live": "live_events",
   "/recordings": "recordings",
   "/reports": "weekly_reports",
-  "/sales": "shopify",
 };

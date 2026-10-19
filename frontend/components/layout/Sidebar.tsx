@@ -19,7 +19,6 @@ const NAV: { path: string; label: string; icon: IconName }[] = [
   { path: "/people", label: "People", icon: "people" },
   { path: "/live", label: "Live events", icon: "live" },
   { path: "/recordings", label: "Recordings", icon: "recordings" },
-  { path: "/sales", label: "Sales", icon: "sales" },
   { path: "/reports", label: "Weekly reports", icon: "reports" },
 ];
 const OWNER_ONLY: (typeof NAV)[number][] = [

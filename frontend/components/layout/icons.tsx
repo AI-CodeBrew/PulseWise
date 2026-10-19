@@ -9,7 +9,6 @@ const PATHS: Record<string, string[]> = {
   people: ["M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8", "M4 21c0-4 3.6-6 8-6s8 2 8 6"],
   live: ["M3 12h4l3-7 4 14 3-7h4"],
   recordings: ["M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18", "M10 8.5v7l5.5-3.5z"],
-  sales: ["M4 4v16h16", "M8 15l3-4 3 2 5-6"],
   reports: ["M7 3h10v18H7z", "M10 8h4", "M10 12h4", "M10 16h2"],
   settings: ["M4 7h10", "M18 7h2", "M4 17h2", "M10 17h10", "M14 5v4h4V5z", "M6 15v4h4v-4z"],
   billing: ["M3 7h18v10H3z", "M3 11h18", "M7 15h3"],
