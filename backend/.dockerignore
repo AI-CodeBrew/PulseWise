@@ -1,0 +1,16 @@
+# Never put these in the image (the secrets live in `fly secrets`, not in files)
+.env
+.env.*
+!.env.example
+
+# Not needed to run the API
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+tests
+requirements-dev.txt
+pytest.ini
+run.py
+smoke_test.py
+test_connection.py

@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   experimental: {
     instantInsights: { validationLevel: "manual-warning" },
   },
-  // Production without a shared domain (e.g. frontend on vercel.app, backend on onrender.com): the browser talks to
+  // Production without a shared domain (e.g. frontend on vercel.app, backend on fly.dev): the browser talks to
   // THIS site at /api/... and Next forwards it to the backend (set BACKEND_URL). The login cookie then belongs to this
   // site, so it works without a custom domain. Locally BACKEND_URL is not set and the browser calls the backend directly.
   async rewrites() {

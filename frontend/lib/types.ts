@@ -714,22 +714,36 @@ export interface ReportSales {
 export type TileKind = "number" | "decimal" | "percent" | "duration" | "text";
 
 export interface TileInfo {
+  /** The key with the period the tile starts on (7 or 30 days). */
   key: string;
+  /** The tile without its period: two keys with the same base are the same tile. */
+  base: string;
+  /** The short name: "Sessions". */
+  label: string;
   title: string;
   description: string;
   kind: TileKind;
   group: string;
+  /** The period it starts on. */
+  days: number;
+  /** The key of this tile for each period: {"7": "sessions_7d", "30": "sessions_30d"}. */
+  period_keys: Record<string, string>;
 }
 
 /** GET /dashboard/tiles/catalog: everything a person can choose from. */
 export interface TileCatalog {
   tiles: TileInfo[];
-  /** The website's own tracked events. Each one can be a tile, as `event:<name>:7` or `event:<name>:30`. */
-  events: { event: string; count: number }[];
+  /** The website's own tracked events. Each one is ONE tile (`key` is the key it starts with: 30 days), switched on the card. */
+  events: { event: string; count: number; key: string }[];
 }
 
 export interface TileValue {
+  /** The key with the period it shows now: "sessions_7d". Switching the period saves another key in its place. */
   key: string;
+  /** The tile without its period (the same for both periods). */
+  base: string;
+  /** The key of this tile for each period: {"7": "sessions_7d", "30": "sessions_30d"}. */
+  period_keys: Record<string, string>;
   /** The full name with its period: "Sessions (last 7 days)" (the chooser and the box use it). */
   title: string;
   /** The short name for the card: "Sessions". */

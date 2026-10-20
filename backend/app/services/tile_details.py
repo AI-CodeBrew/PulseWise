@@ -63,17 +63,17 @@ ORDER BY day
 PHONE = "properties.$device_type IN ('Mobile', 'Tablet')"
 
 SERIES: dict[str, SeriesSpec] = {
-    "active_users_30d": SeriesSpec("Active users per day", "number", _events_series("uniq(person_id)")),
-    "sessions_7d": SeriesSpec("Sessions per day", "number", _sessions_series("count()")),
-    "pageviews_7d": SeriesSpec("Pageviews per day", "number", _events_series("count()", PAGEVIEW)),
-    "visitors_7d": SeriesSpec("Visitors per day", "number", _events_series("uniq(person_id)", PAGEVIEW)),
-    "events_7d": SeriesSpec("Events per day", "number", _events_series("count()")),
-    "bounce_rate_7d": SeriesSpec("Left after 1 page, per day", "percent", _sessions_series("round(100 * avg($is_bounce), 1)")),
-    "avg_visit_7d": SeriesSpec("Average visit length per day", "duration", _sessions_series("round(avg($session_duration))")),
-    "pages_per_visit_7d": SeriesSpec("Pages per visit, per day", "decimal", _sessions_series("round(avg($pageview_count), 1)")),
-    "top_page_7d": SeriesSpec("Views of this page per day", "number", _events_series("count()", PAGEVIEW + " AND properties.$pathname = {path}")),
-    "top_country_7d": SeriesSpec("Visitors from this country per day", "number", _events_series("uniq(person_id)", PAGEVIEW + " AND properties.$geoip_country_name = {country}")),
-    "mobile_share_7d": SeriesSpec("Share of visitors on a phone, per day", "percent", _events_series(f"round(100 * uniqIf(person_id, {PHONE}) / uniq(person_id), 1)", PAGEVIEW)),
+    "active_users": SeriesSpec("Active users per day", "number", _events_series("uniq(person_id)")),
+    "sessions": SeriesSpec("Sessions per day", "number", _sessions_series("count()")),
+    "pageviews": SeriesSpec("Pageviews per day", "number", _events_series("count()", PAGEVIEW)),
+    "visitors": SeriesSpec("Visitors per day", "number", _events_series("uniq(person_id)", PAGEVIEW)),
+    "events": SeriesSpec("Events per day", "number", _events_series("count()")),
+    "bounce_rate": SeriesSpec("Left after 1 page, per day", "percent", _sessions_series("round(100 * avg($is_bounce), 1)")),
+    "avg_visit": SeriesSpec("Average visit length per day", "duration", _sessions_series("round(avg($session_duration))")),
+    "pages_per_visit": SeriesSpec("Pages per visit, per day", "decimal", _sessions_series("round(avg($pageview_count), 1)")),
+    "top_page": SeriesSpec("Views of this page per day", "number", _events_series("count()", PAGEVIEW + " AND properties.$pathname = {path}")),
+    "top_country": SeriesSpec("Visitors from this country per day", "number", _events_series("uniq(person_id)", PAGEVIEW + " AND properties.$geoip_country_name = {country}")),
+    "mobile_share": SeriesSpec("Share of visitors on a phone, per day", "percent", _events_series(f"round(100 * uniqIf(person_id, {PHONE}) / uniq(person_id), 1)", PAGEVIEW)),
 }
 EVENT_SERIES_QUERY = _events_series("count()", "AND event = {name}")
 
@@ -213,17 +213,17 @@ LISTS: dict[str, ListSpec] = {
 
 # What each tile shows: (series spec key, breakdowns, the latest-rows list)
 PLAN: dict[str, tuple[list[str], str]] = {
-    "active_users_30d": (["countries", "devices"], "latest_visits"),
-    "sessions_7d": (["channels", "entry_pages"], "latest_visits"),
-    "pageviews_7d": (["pages", "channels"], "latest_pageviews"),
-    "visitors_7d": (["countries", "devices"], "latest_visits"),
-    "events_7d": (["events_by_name", "pages"], "latest_events"),
-    "bounce_rate_7d": (["bounce_by_entry", "channels"], "bounced_visits"),
-    "avg_visit_7d": (["duration_by_entry", "channels"], "longest_visits"),
-    "pages_per_visit_7d": (["pages_per_visit_by_entry", "pages"], "deepest_visits"),
-    "top_page_7d": (["pages", "page_countries"], "visits_to_page"),
-    "top_country_7d": (["countries", "country_pages"], "visits_from_country"),
-    "mobile_share_7d": (["devices", "browsers"], "mobile_visits"),
+    "active_users": (["countries", "devices"], "latest_visits"),
+    "sessions": (["channels", "entry_pages"], "latest_visits"),
+    "pageviews": (["pages", "channels"], "latest_pageviews"),
+    "visitors": (["countries", "devices"], "latest_visits"),
+    "events": (["events_by_name", "pages"], "latest_events"),
+    "bounce_rate": (["bounce_by_entry", "channels"], "bounced_visits"),
+    "avg_visit": (["duration_by_entry", "channels"], "longest_visits"),
+    "pages_per_visit": (["pages_per_visit_by_entry", "pages"], "deepest_visits"),
+    "top_page": (["pages", "page_countries"], "visits_to_page"),
+    "top_country": (["countries", "country_pages"], "visits_from_country"),
+    "mobile_share": (["devices", "browsers"], "mobile_visits"),
 }
 EVENT_PLAN = (["event_pages", "event_devices"], "event_times")
 
@@ -249,18 +249,17 @@ class Context:
 async def context_for(ph: PostHogClient, key: str) -> Context:
     tile = tiles.describe(key)
     ctx = Context(key=key, tile=tile, days=tile.days, values={"days": tile.days})
-    event = tiles.parse_event_key(key)
-    if event is not None:
-        ctx.values["name"] = ctx.subject = event[0]
-    elif key in ("top_page_7d", "top_country_7d"):
-        # These two are about "the top page" / "the top country": ask the tile itself which one it is right now.
+    if tile.base.startswith("event:"):
+        ctx.values["name"] = ctx.subject = tile.base[len("event:"):]
+    elif tile.base in ("top_page", "top_country"):
+        # These two are about "the top page" / "the top country": ask the tile itself which one it is right now (for its period).
         current = (await tiles.get_values(ph, [key]))[0]["value"]
-        ctx.values["path" if key == "top_page_7d" else "country"] = ctx.subject = str(current)
+        ctx.values["path" if tile.base == "top_page" else "country"] = ctx.subject = str(current)
     return ctx
 
 
 def _plan(ctx: Context) -> tuple[list[str], str]:
-    return EVENT_PLAN if tiles.parse_event_key(ctx.key) else PLAN[ctx.key]
+    return EVENT_PLAN if ctx.tile.base.startswith("event:") else PLAN[ctx.tile.base]
 
 
 # ------------------------------------------------------------------ 1. the trend and the breakdowns
@@ -286,10 +285,10 @@ def _number(value: Any, kind: str) -> int | float:
 async def get_detail(ph: PostHogClient, key: str) -> dict[str, Any]:
     ctx = await context_for(ph, key)
     breakdown_keys, _ = _plan(ctx)
-    if tiles.parse_event_key(key):
+    if ctx.tile.base.startswith("event:"):
         series = SeriesSpec(f"“{ctx.subject}” per day", "number", EVENT_SERIES_QUERY)
     else:
-        series = SERIES[key]
+        series = SERIES[ctx.tile.base]
     breakdowns = [BREAKDOWNS[k] for k in breakdown_keys]
 
     async def run(query: str, name: str) -> list[dict[str, Any]]:
@@ -300,7 +299,7 @@ async def get_detail(ph: PostHogClient, key: str) -> dict[str, Any]:
         *(run(b.query, f"tiles:detail:breakdown:{k}") for k, b in zip(breakdown_keys, breakdowns)),
     )
     points, today = _fill_days(series_rows, ctx.days, series.kind)
-    title_subject = f" ({ctx.subject})" if ctx.subject and key in ("top_page_7d", "top_country_7d") else ""
+    title_subject = f" ({ctx.subject})" if ctx.subject and ctx.tile.base in ("top_page", "top_country") else ""
     return {
         "key": key,
         "days": ctx.days,

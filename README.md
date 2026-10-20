@@ -370,22 +370,45 @@ The browser tests never use your real SMTP, Claude or WhatsApp keys, and never t
 5. Have a native speaker read the Roman Urdu and Urdu report sentences (`backend/app/reports/summary.py`, the `TEXT` table).
 6. HTTPS, one main domain for frontend and backend, and `uvicorn --proxy-headers` (see "Security notes" above).
 
-### Deploying: Vercel (frontend) + Render (backend)
+### Deploying: Vercel (frontend) + Fly.io (backend)
 
-No custom domain needed. The browser only talks to the Vercel site, and Vercel forwards `/api/*` to Render, so the login cookie belongs to the Vercel site.
+No custom domain needed. The browser only talks to the Vercel site, and Vercel forwards `/api/*` to Fly, so the login cookie belongs to the Vercel site.
+
+**1. The backend on Fly.io.** The files are already in `backend/` (`Dockerfile`, `fly.toml`, `.dockerignore`). In PowerShell:
+
+```powershell
+# once: install the Fly tool and log in (skip what you already have)
+iwr https://fly.io/install.ps1 -useb | iex
+fly auth login
+
+cd E:\posthog\backend
+fly apps create pulsewise     # the name must be free on Fly. If it is taken, pick another and change `app = "..."` in fly.toml too.
+
+# The secrets: the same database address and keys as in backend\.env (read from the file, never printed), plus your Vercel address.
+$v = @{}
+Get-Content .env | ForEach-Object { if ($_ -match '^(DATABASE_URL|JWT_SECRET|ENCRYPTION_KEY)=(.+)$') { $v[$Matches[1]] = $Matches[2].Trim('"').Trim("'") } }
+fly secrets set "DATABASE_URL=$($v['DATABASE_URL'])" "JWT_SECRET=$($v['JWT_SECRET'])" "ENCRYPTION_KEY=$($v['ENCRYPTION_KEY'])" "FRONTEND_URL=https://palsewise.vercel.app"
+
+fly deploy --ha=false             # builds the image on Fly, runs "alembic upgrade head", starts ONE machine
+curl.exe https://pulsewise.fly.dev/health      # must answer {"status":"ok"}
+```
+
+**2. Vercel.** Set `BACKEND_URL` to `https://pulsewise.fly.dev` (no trailing `/`), then **Redeploy** (an environment variable only counts after a new deploy).
 
 | Where | Setting | Value |
 |---|---|---|
 | Vercel | Root Directory | `frontend` |
 | Vercel | `NEXT_PUBLIC_API_URL` | `/` |
-| Vercel | `BACKEND_URL` | your Render address, e.g. `https://pulsewise-api.onrender.com` (no trailing `/`) |
-| Render | Root Directory | `backend` |
-| Render | Build Command | `pip install -r requirements.txt` |
-| Render | Start Command | `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'` |
-| Render | `FRONTEND_URL` | your Vercel address, e.g. `https://pulsewise.vercel.app` (exactly, no trailing `/`) |
-| Render | `PYTHON_VERSION` | `3.12.7` |
-| Render | `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY` | the same values as in `backend/.env` |
+| Vercel | `BACKEND_URL` | your Fly address, e.g. `https://pulsewise.fly.dev` (no trailing `/`) |
+| Fly (secret) | `FRONTEND_URL` | your Vercel address, e.g. `https://palsewise.vercel.app` (exactly, no trailing `/`) |
+| Fly (secret) | `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY` | the same values as in `backend/.env` |
 
-Changing a `NEXT_PUBLIC_*` value needs a new Vercel deploy. Keep ONE Render instance (the background jobs run inside it), and note Render's free plan sleeps, which pauses the jobs.
+Good to know:
+- `ENCRYPTION_KEY` must be exactly the key the database was filled with: the websites' analytics keys are encrypted with it. A different key means "can't decrypt".
+- `--ha=false` keeps ONE machine. The background jobs (usage count, reports, invoices) run inside the API, and the login limits are counted per machine. The machine never sleeps (`fly.toml`), unlike Render's free plan.
+- The region is Singapore (`sin`), the closest to the database (Mumbai) and to Pakistan. Fly no longer has Mumbai (`fly platform regions` lists what exists).
+- Later deploys: `cd backend; fly deploy --ha=false`. Look around with `fly status`, `fly logs`, `fly secrets list`. If the app is ever killed for memory: `fly scale memory 1024`.
+- Optional features are secrets too: `fly secrets set SMTP_HOST=... SMTP_PORT=... SMTP_USER=... SMTP_PASSWORD=... SMTP_FROM=...` (emails), `ANTHROPIC_API_KEY=...` (AI summaries), `WHATSAPP_ACCESS_TOKEN=...` and `WHATSAPP_PHONE_NUMBER_ID=...`.
+- Changing a `NEXT_PUBLIC_*` value needs a new Vercel deploy.
 
 > The browser tests use their own ports, **3100** (dashboard) and **8100** (API), so they never meet the servers you run yourself on 3000 / 8000, and they only ever stop the servers they started. To use other ports: `$env:E2E_FRONTEND_PORT = "3200"; $env:E2E_BACKEND_PORT = "8200"`.

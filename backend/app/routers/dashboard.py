@@ -26,7 +26,7 @@ from app.services import tile_details, tiles
 router = APIRouter(prefix="/api/websites/{website_id}/dashboard", tags=["dashboard"])
 
 Site = Annotated[WebsiteConfig, Depends(get_website_config)]
-TileKey = Annotated[str, Query(min_length=1, max_length=140, description="A tile key: a built-in tile, or event:<name>:<7 or 30>")]
+TileKey = Annotated[str, Query(min_length=1, max_length=140, description="A tile key with its period: sessions_7d, sessions_30d... or event:<name>:<7 or 30>")]
 
 
 def _checked(key: str) -> str:
@@ -62,8 +62,9 @@ async def get_tiles(site: Site, user: CurrentUser, db: DbSession):
     keys = _saved(db, user.id, site.website_id)
     if keys is None:  # never chose: the page shows the chooser, and no analytics queries are spent
         return {"configured": False, "tiles": []}
-    # (A saved key that no longer makes sense, e.g. after a code change, is skipped instead of breaking the page.)
-    keys = [k for k in keys if k in tiles.BUILTIN_BY_KEY or tiles.parse_event_key(k)]
+    # (A saved key that no longer makes sense is skipped instead of breaking the page, and a tile saved once per period,
+    # as older versions did, is shown once.)
+    keys = tiles.usable_keys(keys)
     return {"configured": True, "tiles": await tiles.get_values(PostHogClient(site), keys) if keys else []}
 
 

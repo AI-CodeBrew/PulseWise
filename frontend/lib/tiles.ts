@@ -12,6 +12,11 @@ export function formatTileValue(kind: TileKind, value: number | string): string 
   return formatNumber(value);
 }
 
+/** The tile a saved key belongs to, without its period: "sessions_30d" -> "sessions", "event:form_submit:7" -> "event:form_submit". */
+export function baseOf(key: string): string {
+  return key.startsWith("event:") ? key.replace(/:(7|30)$/, "") : key.replace(/_(7|30)d$/, "");
+}
+
 /** How a tile compares with the period just before it. The arrow and the words say it, so it never depends on colour alone. */
 export interface TileChange {
   arrow: "▲" | "▼" | "–";

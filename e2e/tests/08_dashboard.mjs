@@ -35,11 +35,11 @@ const closeBox = (b) => b.eval(`document.querySelector("dialog[open] button[aria
 t.check("a first-time visitor is asked what they want to see", await owner.waitForText("Choose what you want to see on your dashboard", 40000));
 await owner.waitFor(`document.querySelectorAll("fieldset label").length > 10`, 90000); // the list of choices comes from the website's analytics: wait for it
 t.check("  ...nothing is shown until they choose", (await tileTitles(owner)).length === 0);
-t.check("  ...three common tiles are ticked for them", await owner.eval(`["Active users (last 30 days)", "Sessions (last 7 days)", "Pageviews (last 7 days)"].every((x) => { const l = [...document.querySelectorAll("label")].find((l) => l.innerText.includes(x)); return l && l.querySelector("input").checked; })`));
+t.check("  ...three common tiles are ticked for them", await owner.eval(`["Active users", "Sessions", "Pageviews"].every((x) => { const l = [...document.querySelectorAll("label")].find((l) => l.innerText.includes(x)); return l && l.querySelector("input").checked; })`));
 t.check("  ...grouped, with an explanation for each", await owner.eval(`["Traffic", "Engagement", "Content", "Audience", "Your tracked events"].every((g) => [...document.querySelectorAll("legend")].some((l) => l.innerText.trim().toLowerCase() === g.toLowerCase())) && document.body.innerText.includes("A session groups everything one person does")`));
 
 // 2. Add one more tile, then show
-await owner.eval(`[...document.querySelectorAll("label")].find((l) => l.innerText.includes("All events (last 7 days)")).querySelector("input").click()`);
+await owner.eval(`[...document.querySelectorAll("label")].find((l) => l.innerText.includes("All events")).querySelector("input").click()`);
 t.check("the counter shows how many are chosen", await owner.waitForText("4 chosen"));
 await owner.clickText("Show my dashboard");
 t.check("only the chosen tiles are shown, in the chosen order", await owner.waitFor(`document.querySelectorAll("[data-tile]").length === 4`, 60000));
@@ -49,7 +49,7 @@ t.check("  ...each with a number", await owner.eval(`[...document.querySelectorA
 await owner.shot("tiles");
 
 // 2a. The card itself: a calm KPI card, not a wall of text
-t.check("each card shows its period as a small tag, and no repeated 'Click for details'", await owner.eval(`(() => { const t = document.querySelector('[data-tile="active_users_30d"]').innerText; return t.includes("30 days") && document.querySelector('[data-tile="sessions_7d"]').innerText.includes("7 days") && !document.body.innerText.includes("Click for details"); })()`));
+t.check("each card shows its period (7d or 30d), and no repeated 'Click for details'", await owner.eval(`(() => { const on = (key) => document.querySelector('[data-tile="' + key + '"] button[aria-pressed="true"]')?.innerText.trim(); return on("active_users_30d") === "30d" && on("sessions_7d") === "7d" && !document.body.innerText.includes("Click for details"); })()`));
 t.check("  ...the long explanation is not printed on the card (it is behind the (i))", await owner.eval(`!document.body.innerText.includes("Unique people who used your website in the last 30 days")`));
 await owner.realClick('[data-tile="active_users_30d"] button[aria-label^="What is"]');
 t.check("  ...a click on the (i) explains the number in plain words, and does not open the box", await owner.waitFor(`document.querySelector('[data-tile="active_users_30d"] [role="tooltip"]')?.innerText.includes("Unique people who used your website in the last 30 days") === true && !document.querySelector("dialog[open]")`, 5000));
@@ -59,6 +59,17 @@ t.check("  ...every number says how it compares with the period before (or that 
 t.check("  ...numbers in one row line up (same top), even though the words differ", await owner.eval(`(() => { const rows = {}; for (const tile of document.querySelectorAll("[data-tile]")) { const top = Math.round(tile.getBoundingClientRect().top); (rows[top] ||= []).push(Math.round(tile.querySelector("p[aria-label]").getBoundingClientRect().top)); } return Object.values(rows).every((tops) => Math.max(...tops) - Math.min(...tops) <= 1); })()`));
 t.check("  ...a little graph on the tiles that have days to draw", await owner.eval(`document.querySelectorAll("[data-tile] svg").length >= 1`));
 t.check("  ...and the page has no '7 / 30 / 90 days' switch (the tiles have their own periods)", await owner.eval(`![...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "90 days")`));
+
+// 2a2. ONE tile per thing: its period (7d / 30d) is a switch on the card, never a second tile
+t.check("every card has exactly one period switched on", await owner.eval(`[...document.querySelectorAll("[data-tile]")].every((tile) => { const on = tile.querySelectorAll('[role="group"] button[aria-pressed="true"]'); return on.length === 1 && /^(7|30)d$/.test(on[0].innerText.trim()); })`));
+await owner.realClick('[data-tile="sessions_7d"] button[aria-label="Last 30 days"]');
+t.check("switching Sessions to 30d changes THAT tile (still four tiles, not five)", await owner.waitFor(`!!document.querySelector('[data-tile="sessions_30d"]') && !document.querySelector('[data-tile="sessions_7d"]') && document.querySelectorAll("[data-tile]").length === 4`, 60000));
+t.check("  ...it now says 30 days, in the same place as before", await owner.eval(`(() => { const tile = document.querySelector('[data-tile="sessions_30d"]'); return tile.querySelector('button[aria-pressed="true"]').innerText.trim() === "30d" && tile.querySelector('button[aria-label^="Open details"]').getAttribute("aria-label") === "Open details: Sessions (last 30 days)"; })()`) && JSON.stringify(await tileTitles(owner)) === JSON.stringify(["Active users", "Sessions", "Pageviews", "All events"]));
+await owner.goto(`/sites/${ids.demoSite}/dashboard`);
+t.check("  ...and it is remembered when the page is opened again", await owner.waitFor(`!!document.querySelector('[data-tile="sessions_30d"]') && !document.querySelector('[data-tile="sessions_7d"]')`, 60000));
+await owner.realClick('[data-tile="sessions_30d"] button[aria-label="Last 7 days"]');
+t.check("  ...and goes back to 7d the same way", await owner.waitFor(`!!document.querySelector('[data-tile="sessions_7d"]') && !document.querySelector('[data-tile="sessions_30d"]') && document.querySelectorAll("[data-tile]").length === 4`, 60000));
+t.check("  ...the switch does not open the box", await owner.eval(`!document.querySelector("dialog[open]")`));
 
 // 2b. Clicking a tile opens a box with the full information
 t.check("a tile's '...' menu does not open the box", await owner.eval(`(() => { document.querySelector('[data-tile="sessions_7d"] summary').click(); const open = !!document.querySelector("dialog[open]"); document.querySelector('[data-tile="sessions_7d"] summary').click(); return !open; })()`));
@@ -105,18 +116,20 @@ t.check("another person (a viewer) is asked for themselves", await viewer.waitFo
 
 // 4. Customize: tracked events and removing tiles
 await owner.clickText("Customize");
-t.check("Customize shows the choices again, with the current ones ticked", await owner.waitFor(`document.body.innerText.includes("Customize your dashboard") && [...document.querySelectorAll("label")].find((l) => l.innerText.includes("All events (last 7 days)"))?.querySelector("input").checked`, 20000));
-t.check("  ...and the website's tracked events can be chosen (7 or 30 days)", await owner.waitFor(`document.body.innerText.toLowerCase().includes("your tracked events") && (document.querySelectorAll('input[aria-label$="last 7 days"]').length > 0 || document.body.innerText.includes("hasn't sent any events of its own yet"))`, 30000));
-const hasEvents = await owner.eval(`document.querySelectorAll('input[aria-label$="last 7 days"]').length > 0`);
+t.check("Customize shows the choices again, with the current ones ticked", await owner.waitFor(`document.body.innerText.includes("Customize your dashboard") && [...document.querySelectorAll("label")].find((l) => l.innerText.includes("All events"))?.querySelector("input").checked`, 20000));
+const eventBoxes = `(() => { const f = [...document.querySelectorAll("fieldset")].find((x) => x.querySelector("legend")?.innerText.trim().toLowerCase() === "your tracked events"); return f ? [...f.querySelectorAll("ul input[type=checkbox]")] : []; })()`;
+t.check("  ...and the website's tracked events can be chosen, ONE checkbox for each (not one per period)", await owner.waitFor(`document.body.innerText.toLowerCase().includes("your tracked events") && (${eventBoxes}.length > 0 || document.body.innerText.includes("hasn't sent any events of its own yet"))`, 30000));
+const hasEvents = await owner.eval(`${eventBoxes}.length > 0`);
 if (hasEvents) {
-  await owner.eval(`document.querySelector('input[aria-label$="last 7 days"]').click()`);
+  t.check("  ...no checkbox says '7 days' or '30 days' (the period is switched on the card)", await owner.eval(`!${eventBoxes}.some((b) => /last (7|30) days/.test(b.getAttribute("aria-label")))`));
+  await owner.eval(`${eventBoxes}[0].click()`);
 }
-await owner.eval(`[...document.querySelectorAll("label")].find((l) => l.innerText.includes("Pageviews (last 7 days)")).querySelector("input").click()`); // untick one
+await owner.eval(`[...document.querySelectorAll("label")].find((l) => l.innerText.includes("Pageviews")).querySelector("input").click()`); // untick one
 await owner.clickText("Save");
 const expected = hasEvents ? 4 : 3;
 t.check("saving changes the tiles", await owner.waitFor(`document.querySelectorAll("[data-tile]").length === ${expected} && !document.querySelector('[data-tile="pageviews_7d"]') && !document.body.innerText.includes("Customize your dashboard")`, 60000), `expected ${expected}: ` + JSON.stringify(await tileTitles(owner)));
 t.check("  ...the unticked tile is gone", !(await tileTitles(owner)).includes("Pageviews"), JSON.stringify(await tileTitles(owner)));
-if (hasEvents) t.check("  ...a tracked event is now a tile with its own count", await owner.eval(`(() => { const tile = document.querySelector('[data-tile^="event:"]'); return !!tile && tile.querySelector("h3").innerText.trim().length > 0 && /7 days/.test(tile.innerText) && /\\d/.test(tile.querySelector("p[aria-label]").innerText); })()`));
+if (hasEvents) t.check("  ...a tracked event is now a tile with its own count", await owner.eval(`(() => { const tile = document.querySelector('[data-tile^="event:"]'); return !!tile && tile.querySelector("h3").innerText.trim().length > 0 && tile.querySelector('button[aria-pressed="true"]').innerText.trim() === "30d" && /\\d/.test(tile.querySelector("p[aria-label]").innerText); })()`));
 
 if (hasEvents) {
   const eventTile = await owner.eval(`document.querySelector('[data-tile^="event:"]').getAttribute("data-tile")`);

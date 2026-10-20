@@ -15,7 +15,7 @@ def url(site, suffix=""):
 
 def answer_everything(fake):
     # Each total comes with the same number for the period before ("prev_..."); "today" in the daily answers is 2026-10-19.
-    fake.answer("tiles:events_agg", ["active_users_30d", "prev_active_users_30d", "events_7d", "prev_events_7d", "pageviews_7d", "prev_pageviews_7d", "visitors_7d", "prev_visitors_7d"],
+    fake.answer("tiles:events_agg", ["active_users", "prev_active_users", "events", "prev_events", "pageviews", "prev_pageviews", "visitors", "prev_visitors"],
                 [[605, 500, 4665, 4000, 994, 1100, 541, 541]])
     fake.answer("tiles:sessions", ["sessions", "avg_duration", "bounce_rate", "pages_per_visit", "prev_sessions", "prev_avg_duration", "prev_bounce_rate", "prev_pages_per_visit"],
                 [[570, 92.67, 0.1719, 1.7439, 400, 80.0, 0.25, 1.5]])
@@ -146,6 +146,64 @@ def test_a_week_with_visits_after_a_quiet_week_has_no_average_to_compare_with(ap
     assert by_key["sessions_7d"]["previous"] == 0 and by_key["bounce_rate_7d"]["previous"] is None and by_key["bounce_rate_7d"]["empty"] is False
 
 
+# ------------------------------------------------------------------ one tile, with its period as a filter
+
+
+def spy_on_values(monkeypatch):
+    """Every analytics query the dashboard asks: (the query's name, the values it was sent)."""
+    from app import posthog_client
+
+    seen = []
+    original = posthog_client.PostHogClient.hogql
+
+    async def spy(self, query, values=None, **kwargs):
+        seen.append((kwargs.get("name"), dict(values or {})))
+        return await original(self, query, values, **kwargs)
+
+    monkeypatch.setattr(posthog_client.PostHogClient, "hogql", spy)
+    return seen
+
+
+def test_every_tile_can_show_7_or_30_days_and_says_how_to_switch(api, world, fake_posthog):
+    answer_everything(fake_posthog)
+    alice = api("alice@a.test")
+    alice.put(url(world.site_a, "/prefs"), json={"tiles": ["sessions_30d", "event:whatsapp_click:7", "top_page_7d", "active_users_7d"]})
+    by_key = {t["key"]: t for t in alice.get(url(world.site_a, "/tiles")).json()["tiles"]}
+    assert list(by_key) == ["sessions_30d", "event:whatsapp_click:7", "top_page_7d", "active_users_7d"]  # (the period in the key is what is shown)
+    assert by_key["sessions_30d"]["days"] == 30 and by_key["sessions_30d"]["title"] == "Sessions (last 30 days)" and "last 30 days" in by_key["sessions_30d"]["description"]
+    assert by_key["active_users_7d"]["days"] == 7 and by_key["active_users_7d"]["title"] == "Active users (last 7 days)"  # (it starts on 30, but can be 7)
+    assert by_key["sessions_30d"]["base"] == "sessions" and by_key["sessions_30d"]["period_keys"] == {"7": "sessions_7d", "30": "sessions_30d"}
+    assert by_key["event:whatsapp_click:7"]["base"] == "event:whatsapp_click"
+    assert by_key["event:whatsapp_click:7"]["period_keys"] == {"7": "event:whatsapp_click:7", "30": "event:whatsapp_click:30"}
+    assert len(by_key["sessions_30d"]["series"]) == 30 and len(by_key["active_users_7d"]["series"]) == 7  # (the graph follows the period)
+
+
+def test_each_period_is_asked_for_with_its_own_days_and_only_when_needed(api, world, fake_posthog, monkeypatch):
+    answer_everything(fake_posthog)
+    seen = spy_on_values(monkeypatch)
+    alice = api("alice@a.test")
+    alice.put(url(world.site_a, "/prefs"), json={"tiles": ["sessions_30d", "pageviews_7d", "visitors_30d", "bounce_rate_30d"]})
+    alice.get(url(world.site_a, "/tiles"))
+    asked = sorted((name, values.get("days")) for name, values in seen)
+    assert asked == [("tiles:events_agg", 7), ("tiles:events_agg", 30), ("tiles:events_daily", None), ("tiles:sessions", 30), ("tiles:sessions_daily", 30)]
+    # (the totals are asked once per period, the graphs once for all of them: the longest period that is needed)
+
+
+def test_a_tile_is_never_made_twice_for_two_periods(api, db, world, fake_posthog):
+    alice = api("alice@a.test")
+    saved = alice.put(url(world.site_a, "/prefs"), json={"tiles": ["sessions_7d", "event:x:7", "sessions_30d", "event:x:30", "pageviews_30d"]}).json()["keys"]
+    assert saved == ["sessions_7d", "event:x:7", "pageviews_30d"]  # the first one wins, the order is kept
+
+
+def test_a_tile_that_older_versions_saved_once_per_period_is_shown_once(api, db, world, fake_posthog):
+    answer_everything(fake_posthog)
+    saved = ["event:cta_click:7", "event:whatsapp_click:30", "event:cta_click:30", "sessions_7d", "sessions_30d", "event:whatsapp_click:7"]
+    db.add(DashboardPref(user_id=world.alice.id, website_id=world.site_a.id, tiles=saved))
+    db.commit()
+    shown = [t["key"] for t in api("alice@a.test").get(url(world.site_a, "/tiles")).json()["tiles"]]
+    assert shown == ["event:cta_click:7", "event:whatsapp_click:30", "sessions_7d"]
+
+
 def test_only_the_queries_the_chosen_tiles_need_are_run(api, world, fake_posthog):
     answer_everything(fake_posthog)
     alice = api("alice@a.test")
@@ -183,8 +241,21 @@ def test_the_catalog_lists_builtin_tiles_and_the_websites_tracked_events(api, wo
     catalog = api("alice@a.test").get(url(world.site_a, "/tiles/catalog")).json()
     assert [t["key"] for t in catalog["tiles"]] == [t.key for t in tiles.BUILTIN] and len(catalog["tiles"]) == 11
     assert {t["group"] for t in catalog["tiles"]} == {"Traffic", "Engagement", "Content", "Audience"}
-    assert catalog["events"] == [{"event": "whatsapp_click", "count": 120}, {"event": "cta_click", "count": 40}]
+    # one entry per tracked event (not one per period): its key says which period it starts with
+    assert catalog["events"] == [{"event": "whatsapp_click", "count": 120, "key": "event:whatsapp_click:30"}, {"event": "cta_click", "count": 40, "key": "event:cta_click:30"}]
     assert set(DEFAULT) <= {t["key"] for t in catalog["tiles"]}  # the pre-ticked ones exist
+    sessions = next(t for t in catalog["tiles"] if t["base"] == "sessions")
+    assert sessions["key"] == "sessions_7d" and sessions["label"] == "Sessions" and sessions["period_keys"] == {"7": "sessions_7d", "30": "sessions_30d"}
+    active = next(t for t in catalog["tiles"] if t["base"] == "active_users")
+    assert active["key"] == "active_users_30d" and active["days"] == 30 and "last 30 days" in active["description"]
+
+
+def test_an_event_name_that_could_never_be_a_tile_is_not_offered(api, world, fake_posthog):
+    too_long, with_newline = "a" * 150, "bad\nname"
+    fake_posthog.answer("events:custom", ["event", "count", "visitors", "last_seen"],
+                        [[too_long, 5, 1, "2026-10-14T10:00:00Z"], [with_newline, 4, 1, "2026-10-14T10:00:00Z"], ["fine", 3, 1, "2026-10-14T10:00:00Z"]])
+    catalog = api("alice@a.test").get(url(world.site_a, "/tiles/catalog")).json()
+    assert [e["event"] for e in catalog["events"]] == ["fine"]
 
 
 # ------------------------------------------------------------------ everyone has their own view
@@ -231,7 +302,7 @@ def test_deleting_a_user_or_website_removes_the_choices(api, db, world):
 
 @pytest.mark.parametrize("bad", [
     ["not_a_tile"], ["event:x:5"], ["event::7"], ["event:x"], ["event:" + "a" * 101 + ":7"], ["event: padded :7"], ["event:bad\nname:7"],
-    ["sessions_7d", "nope"], ["EVENT:x:7"], ["pageviews_7d;drop table"], [""],
+    ["sessions_7d", "nope"], ["EVENT:x:7"], ["pageviews_7d;drop table"], [""], ["sessions_14d"], ["sessions_7"], ["Sessions_7d"], ["event:x:14"],
 ])
 def test_unknown_or_malformed_tiles_are_refused_and_nothing_is_saved(api, db, world, bad):
     assert api("alice@a.test").put(url(world.site_a, "/prefs"), json={"tiles": bad}).status_code == 422

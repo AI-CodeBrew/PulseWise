@@ -59,7 +59,7 @@ def spy_on_queries(monkeypatch):
 
 @pytest.mark.parametrize("key", BUILTIN_KEYS)
 def test_every_built_in_tile_has_a_trend_and_breakdowns(api, world, fake_posthog, key):
-    breakdown_keys, _ = tile_details.PLAN[key]
+    breakdown_keys, _ = tile_details.PLAN[tiles.describe(key).base]
     answer_detail(fake_posthog, breakdown_keys)
     body = get_detail(api("alice@a.test"), world.site_a, key).json()
     days = 30 if key == "active_users_30d" else 7
@@ -118,6 +118,26 @@ def test_the_top_page_and_top_country_tiles_follow_whatever_is_on_top_right_now(
 
     answer_detail(fake_posthog, ["countries", "country_pages"])
     assert get_detail(api("alice@a.test"), world.site_a, "top_country_7d").json()["subject"] == "Pakistan"
+
+
+def test_a_tile_switched_to_the_other_period_tells_its_story_for_that_period(api, world, fake_posthog, monkeypatch):
+    seen = spy_on_queries(monkeypatch)
+    answer_detail(fake_posthog, ["channels", "entry_pages"])
+    body = get_detail(api("alice@a.test"), world.site_a, "sessions_30d").json()  # Sessions starts on 7 days: this is the same tile on 30
+    assert body["days"] == 30 and len(body["series"]["points"]) == 30
+    assert body["period"] == {"start": (date.fromisoformat(TODAY) - timedelta(days=29)).isoformat(), "end": TODAY}
+    assert seen and all(q["values"].get("days") == 30 for q in seen)
+
+    seen.clear()
+    answer_detail(fake_posthog, ["countries", "devices"])
+    body = get_detail(api("alice@a.test"), world.site_a, "active_users_7d").json()  # and Active users starts on 30
+    assert body["days"] == 7 and len(body["series"]["points"]) == 7
+    assert seen and all(q["values"].get("days") == 7 for q in seen)
+
+    seen.clear()
+    answer_detail(fake_posthog, ["pages", "page_countries"])
+    assert get_detail(api("alice@a.test"), world.site_a, "top_page_30d").json()["subject"] == "/collections/kitchen"
+    assert [q["values"]["days"] for q in seen if q["name"] == "tiles:top_page"] == [30]  # "which page is on top" is asked for 30 days, too
 
 
 def test_unknown_keys_are_refused_and_access_is_checked(api, world, fake_posthog):

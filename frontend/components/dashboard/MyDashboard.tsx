@@ -15,12 +15,11 @@ import { useApi } from "@/hooks/useApi";
 import { useSiteApi } from "@/hooks/useSite";
 import { apiPut } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
-import { formatTileValue, tileChange } from "@/lib/tiles";
+import { baseOf, formatTileValue, tileChange } from "@/lib/tiles";
 import type { MyTiles, TileCatalog, TileValue } from "@/lib/types";
 import { TileDetailDialog } from "./TileDetailDialog";
 
 const DEFAULT_TILES = ["active_users_30d", "sessions_7d", "pageviews_7d"]; // ticked for you the first time
-const eventKey = (name: string, days: 7 | 30) => `event:${name}:${days}`;
 
 export function MyDashboard() {
   const api = useSiteApi();
@@ -66,7 +65,17 @@ export function MyDashboard() {
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-4">
                   {data.tiles.map((tile) => (
-                    <Tile key={tile.key} tile={tile} readOnly={readOnly} onOpen={() => setOpened({ tile, id: ++openings.current })} onRemove={() => removeTile(keys, tile.key, reload)} />
+                    <Tile
+                      key={tile.base ?? tile.key}
+                      tile={tile}
+                      readOnly={readOnly}
+                      onOpen={() => setOpened({ tile, id: ++openings.current })}
+                      onRemove={() => save(keys.filter((k) => k !== tile.key))}
+                      onPeriod={(days) => {
+                        const other = tile.period_keys?.[String(days)];
+                        if (other) save(keys.map((k) => (k === tile.key ? other : k)));
+                      }}
+                    />
                   ))}
                 </div>
               )}
@@ -78,8 +87,11 @@ export function MyDashboard() {
     </section>
   );
 
-  function removeTile(keys: string[], key: string, done: () => void) {
-    void apiPut(api("/dashboard/prefs"), { tiles: keys.filter((k) => k !== key) }).then(done);
+  /** Save the changed list (a tile removed, or a tile switched to the other period), then show the new numbers. */
+  function save(next: string[]) {
+    void apiPut(api("/dashboard/prefs"), { tiles: next })
+      .catch(() => undefined) // (if it failed, the reload below simply shows what is really saved)
+      .then(() => tiles.reload());
   }
 }
 
@@ -98,7 +110,19 @@ function TileSkeletons() {
  * with the period before, and a little graph of the days. The whole card is a button that opens the box with the full story
  * (the "..." menu and the (i) stay usable). Every part has a fixed place, so the numbers of one row line up.
  */
-function Tile({ tile, readOnly, onOpen, onRemove }: { tile: TileValue; readOnly: boolean; onOpen: () => void; onRemove: () => void }) {
+function Tile({
+  tile,
+  readOnly,
+  onOpen,
+  onRemove,
+  onPeriod,
+}: {
+  tile: TileValue;
+  readOnly: boolean;
+  onOpen: () => void;
+  onRemove: () => void;
+  onPeriod: (days: number) => void;
+}) {
   const isText = typeof tile.value === "string";
   const text = tile.empty && !isText ? "—" : formatTileValue(tile.kind, tile.value);
   const quiet = tile.empty || tile.value === 0; // nothing to see yet: a calm colour instead of a headline
@@ -122,7 +146,7 @@ function Tile({ tile, readOnly, onOpen, onRemove }: { tile: TileValue; readOnly:
           <InfoTip name={tile.label} text={tile.description} />
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2">{tile.days} days</span>
+          <PeriodSwitch tile={tile} readOnly={readOnly} onPick={onPeriod} />
           {!readOnly && (
             <details className="pointer-events-auto relative z-[2] opacity-60 transition-opacity group-hover:opacity-100 open:opacity-100 focus-within:opacity-100">
               <summary aria-label={`Options for ${tile.title}`} className="cursor-pointer list-none rounded-md px-1.5 text-lg leading-6 text-ink-2 hover:bg-surface-2">
@@ -165,6 +189,38 @@ function Tile({ tile, readOnly, onOpen, onRemove }: { tile: TileValue; readOnly:
         </div>
         {tile.series && !tile.empty && <Sparkline values={tile.series} className="h-9 w-24 shrink-0" />}
       </div>
+    </div>
+  );
+}
+
+/**
+ * "7d | 30d": the period a tile shows. One tile, switched here (never one tile per period); the choice is saved with the tile.
+ * Somebody who only looks (an admin viewing as the client) sees the period, without the switch.
+ */
+function PeriodSwitch({ tile, readOnly, onPick }: { tile: TileValue; readOnly: boolean; onPick: (days: number) => void }) {
+  const periods = Object.keys(tile.period_keys ?? {}).map(Number).sort((a, b) => a - b);
+  if (readOnly || periods.length === 0) {
+    return (
+      <span title={`Last ${tile.days} days`} className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2">
+        {tile.days}d
+      </span>
+    );
+  }
+  return (
+    <div role="group" aria-label={`Period of ${tile.label}`} className="pointer-events-auto inline-flex rounded-full bg-surface-2 p-0.5 text-[11px] font-medium">
+      {periods.map((days) => (
+        <button
+          key={days}
+          type="button"
+          aria-pressed={tile.days === days}
+          aria-label={`Last ${days} days`}
+          title={`Last ${days} days`}
+          onClick={() => tile.days !== days && onPick(days)}
+          className={`rounded-full px-2 py-0.5 ${tile.days === days ? "bg-surface text-ink shadow-sm" : "text-ink-2 hover:text-ink"}`}
+        >
+          {days}d
+        </button>
+      ))}
     </div>
   );
 }
@@ -233,14 +289,17 @@ function TilePicker({ selected, firstTime = false, onSaved, onCancel }: { select
     await apiPut(api("/dashboard/prefs"), { tiles: chosen });
     onSaved();
   });
-  const toggle = (key: string) => setChosen((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]));
+  // ONE tile per thing: "Sessions" on 7 days and "Sessions" on 30 days are the same tile (its period is switched on the card).
+  const isChosen = (base: string) => chosen.some((k) => baseOf(k) === base);
+  const toggle = (base: string, startKey: string) => setChosen((c) => (isChosen(base) ? c.filter((k) => baseOf(k) !== base) : [...c, startKey]));
 
   return (
     <Card>
       <div className="px-4 pt-4 sm:px-5">
         <h2 className="text-base font-semibold text-ink">{firstTime ? "Choose what you want to see on your dashboard" : "Customize your dashboard"}</h2>
         <p className="mt-1 text-sm text-ink-2">
-          Tick the numbers you care about. {firstTime ? "You can change this any time with the Customize button." : "Untick the ones you don't need."}
+          Tick the numbers you care about. Every number can show the last 7 or the last 30 days: you switch that on the number itself.{" "}
+          {firstTime ? "You can change all this any time with the Customize button." : "Untick the ones you don't need."}
         </p>
       </div>
       <Async query={catalog} skeleton={<Skeleton className="m-5 h-40" />}>
@@ -257,9 +316,9 @@ function TilePicker({ selected, firstTime = false, onSaved, onCancel }: { select
                       .filter((t) => t.group === group)
                       .map((t) => (
                         <label key={t.key} className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2.5 text-sm hover:bg-surface-2">
-                          <input type="checkbox" checked={chosen.includes(t.key)} onChange={() => toggle(t.key)} className="mt-0.5 h-4 w-4 accent-[var(--accent)]" />
+                          <input type="checkbox" checked={isChosen(baseOf(t.key))} onChange={() => toggle(baseOf(t.key), t.key)} className="mt-0.5 h-4 w-4 accent-[var(--accent)]" />
                           <span>
-                            <span className="font-medium text-ink">{t.title}</span>
+                            <span className="font-medium text-ink">{t.label ?? t.title}</span>
                             <span className="block text-xs text-ink-2">{t.description}</span>
                           </span>
                         </label>
@@ -281,25 +340,20 @@ function TilePicker({ selected, firstTime = false, onSaved, onCancel }: { select
                     )}
                     <ul className="divide-y divide-line rounded-lg border border-line">
                       {events.map((e) => (
-                        <li key={e.event} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm">
-                          <span className="min-w-0">
-                            <span className="break-all font-medium text-ink">{e.event}</span>
-                            <span className="ms-2 text-xs text-muted">{formatNumber(e.count)} in the last 30 days</span>
-                          </span>
-                          <span className="flex gap-4">
-                            {([7, 30] as const).map((days) => (
-                              <label key={days} className="flex items-center gap-1.5 text-ink-2">
-                                <input
-                                  type="checkbox"
-                                  checked={chosen.includes(eventKey(e.event, days))}
-                                  onChange={() => toggle(eventKey(e.event, days))}
-                                  aria-label={`${e.event}, last ${days} days`}
-                                  className="h-4 w-4 accent-[var(--accent)]"
-                                />
-                                {days} days
-                              </label>
-                            ))}
-                          </span>
+                        <li key={e.event}>
+                          <label className="flex cursor-pointer flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-surface-2">
+                            <span className="min-w-0">
+                              <span className="break-all font-medium text-ink">{e.event}</span>
+                              <span className="ms-2 text-xs text-muted">{formatNumber(e.count)} in the last 30 days</span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={isChosen(`event:${e.event}`)}
+                              onChange={() => toggle(`event:${e.event}`, e.key ?? `event:${e.event}:30`)}
+                              aria-label={e.event}
+                              className="h-4 w-4 accent-[var(--accent)]"
+                            />
+                          </label>
                         </li>
                       ))}
                       {events.length === 0 && <li className="px-3 py-2 text-sm text-muted">No event matches.</li>}
