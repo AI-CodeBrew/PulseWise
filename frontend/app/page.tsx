@@ -4,17 +4,20 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
-import { RequireAuth } from "@/components/auth/RequireAuth";
+import { LandingPage } from "@/components/landing/LandingPage";
 import { FullPageLoading, FullPageMessage } from "@/components/ui/FullPage";
 import { lastSite } from "@/hooks/useSite";
 
-/** "/" just opens a website: the one used last time, or the first one. */
+/**
+ * "/": the landing page for visitors (with a "Log in" button on top). Somebody who is logged in goes straight to
+ * a website instead: the one used last time, or the first one.
+ */
 export default function HomePage() {
-  return (
-    <RequireAuth>
-      <OpenFirstWebsite />
-    </RequireAuth>
-  );
+  const { status } = useAuth();
+  if (status === "authenticated") return <OpenFirstWebsite />;
+  // While the login is still being checked, visitors already see the page (it needs no data); a logged-in person
+  // is sent on as soon as the check is done.
+  return <LandingPage />;
 }
 
 function OpenFirstWebsite() {

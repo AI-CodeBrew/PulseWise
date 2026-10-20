@@ -171,7 +171,7 @@ Copy `frontend/.env.example` to `frontend/.env.local` to change these. The defau
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Where the backend runs |
 | `NEXT_PUBLIC_BRAND_NAME` | `Iris` | Product name in the sidebar and tab title (white-label) |
-| `NEXT_PUBLIC_BRAND_LOGO` | `/brand/iris-mark.png` | The round logo next to the name (a picture in `frontend/public`). The browser-tab icon is `app/favicon.ico` + `app/icon.png` |
+| `NEXT_PUBLIC_BRAND_LOGO` | `/brand/iris-mark.png?v=2` | The round logo next to the name (a picture in `frontend/public`). The browser-tab icon is `app/favicon.ico` + `app/icon.png` |
 
 `NEXT_PUBLIC_*` values are visible in the browser, so never put secrets in them. The PostHog key stays in `backend/.env`.
 

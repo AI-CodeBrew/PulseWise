@@ -21,8 +21,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen lg:pl-60">
-      {/* thin green + red line across the very top, over the menu and the top bar */}
-      <div aria-hidden="true" className="chrome-stripe fixed inset-x-0 top-0 z-40 h-[3px]" />
       <ViewAsBanner />
       {/* Desktop sidebar ("chrome" = the little dark frame, see globals.css) */}
       <aside className="chrome fixed inset-y-0 left-0 hidden w-60 bg-surface lg:block">

@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { AuthCard, Field, FormMessage, SubmitButton } from "@/components/auth/AuthCard";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { LandingIntro } from "@/components/auth/LandingIntro";
 import { ApiError, apiPost } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
@@ -47,7 +48,7 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthCard title="Log in" subtitle="See how your website is doing.">
+    <AuthCard title="Log in" subtitle="Welcome back! Log in to see your dashboard." aside={<LandingIntro />}>
       {justReset && <FormMessage kind="success">Your password was changed. Please log in.</FormMessage>}
       {error && <FormMessage kind="error">{error}</FormMessage>}
       <form onSubmit={onSubmit}>
