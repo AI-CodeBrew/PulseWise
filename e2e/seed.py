@@ -39,8 +39,8 @@ def user(db, email, password, name, admin=False):
     return u
 
 
-def client_with_site(db, name, site_name, domain):
-    c = Client(name=name, contact_email=f"hello@{domain}")
+def client_with_site(db, name, site_name, domain, currency="USD"):
+    c = Client(name=name, contact_email=f"hello@{domain}", currency=currency)
     db.add(c)
     db.flush()
     # Created "10 days ago", so the daily health check treats them as established (new sites get a grace period).
@@ -55,7 +55,7 @@ def client_with_site(db, name, site_name, domain):
 with get_sessionmaker()() as db:
     admin = user(db, "admin@e2e.test", "Admin-E2E-Pass-1", "E2E Admin", admin=True)
     demo, demo_site = client_with_site(db, "Demo Shop", "demo-shop.pk", "demo-shop.pk")
-    other, other_site = client_with_site(db, "Other Co", "other.example", "other.example")
+    other, other_site = client_with_site(db, "Other Co", "other.example", "other.example", currency="PKR")  # (it has an old invoice in rupees)
     owner = user(db, "owner@demo.test", "Owner-E2E-Pass-1", "Demo Owner")
     viewer = user(db, "viewer@demo.test", "Viewer-E2E-Pass-1", "Demo Viewer")
     other_owner = user(db, "other@other.test", "Other-E2E-Pass-1", "Other Owner")

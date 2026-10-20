@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-import { InvoiceTable, UsageMeter } from "@/components/billing/parts";
+import { InvoiceTable, QuotaMeter, UsageMeter } from "@/components/billing/parts";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Button, Message, SelectField, TextField, useAction } from "@/components/ui/Form";
 import { Async, EmptyState, Skeleton } from "@/components/ui/States";
@@ -10,6 +10,7 @@ import { useApi } from "@/hooks/useApi";
 import { apiDelete, apiPatch, apiPost, apiPut } from "@/lib/api";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { AdminClientDetail, BillingSummary, Currency, InvoiceRow, ListResponse, Plan } from "@/lib/types";
+import { ExtraUsagePanel } from "./ExtraUsagePanel";
 import { InvoiceActions } from "./InvoiceActions";
 import { PayInvoicePanel } from "./PayInvoicePanel";
 
@@ -33,9 +34,11 @@ export function PlanBillingCard({ client, reload }: { client: AdminClientDetail;
             <div className="grid gap-6 lg:grid-cols-2">
               <PlanForm client={client} billing={b} plans={plans.data?.results ?? []} onChanged={refresh} />
               <div className="space-y-4">
-                <UsageMeter label="Events this month" used={b.usage.events} limit={b.usage.event_limit} />
+                <QuotaMeter label="Events this month" used={b.usage.events} limit={b.usage.event_limit} remaining={b.usage.event_remaining} over={b.usage.event_over} />
+                <QuotaMeter label="Recordings (videos) this month" used={b.usage.recordings} limit={b.usage.recording_limit} remaining={b.usage.recording_remaining} over={b.usage.recording_over} />
                 <UsageMeter label="Websites" used={b.usage.websites} limit={b.usage.max_websites} />
                 <UsageMeter label="People" used={b.usage.members} limit={b.usage.max_members} />
+                {b.plan && <ExtraUsagePanel clientId={client.id} currency={b.client.currency} onChanged={refresh} />}
                 {b.outstanding.count > 0 && (
                   <Message kind={b.outstanding.overdue_count > 0 ? "error" : "info"}>
                     {b.outstanding.count} unpaid invoice{b.outstanding.count > 1 ? "s" : ""}, {formatMoney(b.outstanding.amount, b.client.currency)} in total
@@ -109,7 +112,8 @@ function PlanForm({ client, billing, plans, onChanged }: { client: AdminClientDe
       {sub && billing.plan ? (
         <p className="text-sm text-ink-2">
           On <strong className="text-ink">{billing.plan.name}</strong> at <strong className="text-ink">{formatMoney(billing.plan.price, billing.client.currency)}</strong> per month
-          {sub.price_override !== null ? " (special price)" : ""}. Next invoice on {formatDate(sub.next_invoice_date)}.
+          {sub.price_override !== null ? " (special price)" : ""}. Next invoice: {formatMoney(sub.next_invoice_amount, billing.client.currency)} on {formatDate(sub.next_invoice_date)}
+          {sub.next_invoice_is_intro ? " (first month price)" : ""}.
         </p>
       ) : (
         <p className="text-sm text-ink-2">No plan: this client is unrestricted and isn&apos;t invoiced.</p>
@@ -121,7 +125,8 @@ function PlanForm({ client, billing, plans, onChanged }: { client: AdminClientDe
             .filter((p) => p.is_active || p.id === sub?.plan_id)
             .map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({formatMoney(currency === "USD" ? p.price_usd : p.price_pkr, currency)})
+                {p.name} ({formatMoney(currency === "USD" ? p.price_usd : p.price_pkr, currency)}
+                {(currency === "USD" ? p.intro_price_usd : p.intro_price_pkr) !== null ? `, first month ${formatMoney((currency === "USD" ? p.intro_price_usd : p.intro_price_pkr) ?? 0, currency)}` : ""})
               </option>
             ))}
         </SelectField>

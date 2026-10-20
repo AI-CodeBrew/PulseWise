@@ -163,6 +163,14 @@ register(
                "Shopify releases a new version every 3 months and retires old ones after about a year. If syncing starts failing with a 'version' error, set a newer one (see shopify.dev/docs/api/usage/versioning).", "Shopify"),
 )
 
+# Plan prices "according to PostHog, with our commission"
+register(
+    SettingDef("billing.commission_percent", 30.0, "float", "Your commission on top of PostHog's price (%)",
+               "Used for the suggested plan price and for the extra-usage invoice: you charge PostHog's price for the extra events and recordings plus this percentage. Clients never see it.", "Billing", 0, 1000),
+    SettingDef("billing.base_price_usd", 30.0, "float", "Base price of a plan (USD per month)",
+               "What a plan costs when it stays inside PostHog's free allowance (1,000,000 events and 5,000 recordings a month). A bigger plan adds PostHog's price for the extra volume plus your commission.", "Billing", 0, 100000),
+)
+
 # Online payments (Phase 10)
 register(
     SettingDef("billing.online_provider", "", "line", "Online payment gateway",

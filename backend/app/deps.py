@@ -8,23 +8,28 @@ tests/test_tenant_isolation.py prove it for every endpoint.
 
 import dataclasses
 import logging
+import time
 import uuid
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.access import find_website_access
-from app.config import WebsiteConfig
+from app.config import WebsiteConfig, settings
 from app.db import get_db
 from app.models import User, Website
-from app.security import SESSION_TOKEN, VIEWAS_TOKEN, TokenError, decode_token, decrypt_secret
+from app.security import ADMIN_TOKEN, SESSION_TOKEN, VIEWAS_TOKEN, TokenError, create_token, decode_token, decrypt_secret
 
 log = logging.getLogger(__name__)
 
 SESSION_COOKIE = "portal_session"
 VIEW_AS_COOKIE = "portal_view_as"
+ADMIN_COOKIE = "portal_admin"  # set when an admin confirms their password: the admin panel is open while it is valid
+ADMIN_COOKIE_PATH = "/api"  # only the API ever needs it
+ADMIN_LOCKED_MESSAGE = "Please confirm your password to use the admin panel."
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -93,8 +98,44 @@ def get_view_as_client_id(request: Request, _user: CurrentUser) -> uuid.UUID | N
 ViewAsClientId = Annotated[uuid.UUID | None, Depends(get_view_as_client_id)]
 
 
-def require_admin(request: Request, user: CurrentUser) -> User:
+def admin_unlock_claims(request: Request, user: User) -> dict | None:
+    """The admin's "password confirmed" cookie, if it is valid for THIS admin right now. Otherwise None."""
+    token = request.cookies.get(ADMIN_COOKIE)
+    if not user.is_admin or not token:
+        return None
+    try:
+        claims = decode_token(token, ADMIN_TOKEN)
+    except TokenError:
+        return None  # expired or garbage
+    # Made for this very admin, and still valid: a password change bumps token_version and locks everything again.
+    if claims.get("sub") != str(user.id) or claims.get("ver") != user.token_version:
+        return None
+    return claims
+
+
+def set_admin_cookie(response: Response, user: User) -> None:
+    lifetime = timedelta(minutes=settings.admin_unlock_minutes)
+    response.set_cookie(
+        ADMIN_COOKIE,
+        create_token(user.id, user.token_version, ADMIN_TOKEN, lifetime),
+        max_age=int(lifetime.total_seconds()),
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="strict",  # never sent along with a request that another website started
+        path=ADMIN_COOKIE_PATH,
+    )
+
+
+def clear_admin_cookie(response: Response) -> None:
+    response.delete_cookie(ADMIN_COOKIE, path=ADMIN_COOKIE_PATH, secure=settings.cookie_secure, httponly=True, samesite="strict")
+
+
+def require_admin(request: Request, response: Response, user: CurrentUser) -> User:
     """For admin-only endpoints (the admin panel). Enforced here, in the backend.
+
+    Being an admin is not enough: the admin must also have confirmed their password a short while ago
+    ("unlock", see routers/auth.py), so someone who borrows a logged-in browser still can't open the panel.
+    The answer when it is locked is 423, so the screen can ask for the password instead of showing an error.
 
     While an admin views the dashboard "as a client" they act as that client, so admin tools are off.
     """
@@ -102,6 +143,12 @@ def require_admin(request: Request, user: CurrentUser) -> User:
         raise HTTPException(status_code=403, detail="Only admins can do this.")
     if request.state.view_as_client_id is not None:
         raise HTTPException(status_code=403, detail="Exit the client view to use admin tools.")
+    claims = admin_unlock_claims(request, user)
+    if claims is None:
+        raise HTTPException(status_code=423, detail=ADMIN_LOCKED_MESSAGE)
+    # While the admin keeps working the panel stays open: renew the cookie once half of its time is gone.
+    if claims["exp"] - time.time() < settings.admin_unlock_minutes * 60 / 2:
+        set_admin_cookie(response, user)
     return user
 
 

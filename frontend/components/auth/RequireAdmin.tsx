@@ -3,13 +3,14 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { AdminUnlock } from "@/components/admin/AdminUnlock";
 import { FullPageMessage } from "@/components/ui/FullPage";
 import { useAuth } from "./AuthProvider";
 
 /**
- * Shows `children` only to admins who are NOT currently viewing as a client.
- * (A convenience for the screen. The real protection is in the backend: every /api/admin/* call
- * is refused for anyone who isn't an admin.)
+ * Shows `children` only to admins who are NOT currently viewing as a client AND have typed their password again
+ * for the admin panel. (A convenience for the screen. The real protection is in the backend: every /api/admin/* call
+ * is refused for anyone who isn't an admin, and for an admin who hasn't confirmed the password.)
  */
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const { me } = useAuth();
@@ -32,5 +33,6 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
       </FullPageMessage>
     );
   }
+  if (!me.admin_unlocked) return <AdminUnlock />;
   return <>{children}</>;
 }

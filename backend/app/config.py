@@ -38,6 +38,7 @@ class Settings:
     jwt_secret: str  # signs login cookies
     encryption_keys: list[str]  # Fernet key(s) for stored PostHog API keys; first one encrypts
     session_days: int  # how long a login lasts
+    admin_unlock_minutes: int  # how long the admin panel stays open after the password was confirmed (it renews while it is used)
     cookie_secure: bool  # cookies only over HTTPS (must be true in production)
 
     # --- PostHog hosts we may send API keys to (protects against typos and misuse) ---
@@ -78,6 +79,7 @@ def load_settings() -> Settings:
         jwt_secret=os.getenv("JWT_SECRET", "").strip(),
         encryption_keys=_list("ENCRYPTION_KEY", ""),
         session_days=int(os.getenv("SESSION_DAYS", "7")),
+        admin_unlock_minutes=max(1, int(os.getenv("ADMIN_UNLOCK_MINUTES", "30"))),
         # Default: secure cookies whenever the site itself runs on https.
         cookie_secure=_bool("COOKIE_SECURE", frontend_url.startswith("https://")),
         posthog_allowed_hosts=["https://us.posthog.com", "https://eu.posthog.com"]

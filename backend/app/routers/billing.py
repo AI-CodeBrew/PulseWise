@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.audit import audit
 from app.billing import notifications, providers
 from app.billing.service import BillingError, record_payment
-from app.billing.summary import billing_summary
+from app.billing.summary import billing_summary, client_plans
 from app.config import settings
 from app.deps import CurrentUser, DbSession, ViewAsClientId, client_ip
 from app.models import Client, ClientMember, Invoice
@@ -40,7 +40,9 @@ def owner_client(db: DbSession, user: CurrentUser, client_id: uuid.UUID, view_as
 
 @router.get("/clients/{client_id}/billing", summary="Plan, usage and invoices of a client (account owners only)")
 def get_billing(client_id: uuid.UUID, user: CurrentUser, db: DbSession, view_as: ViewAsClientId):
-    return billing_summary(db, owner_client(db, user, client_id, view_as))
+    client = owner_client(db, user, client_id, view_as)
+    # `available_plans`: what the client could choose (shown on their Billing page; they ask us to switch, we do it in the admin panel)
+    return {**billing_summary(db, client), "available_plans": client_plans(db, client)}
 
 
 @router.post("/clients/{client_id}/invoices/{invoice_id}/checkout", summary="Start an online payment for an open invoice")

@@ -64,9 +64,12 @@ class RateLimiter:
 login_failures_by_account = RateLimiter(max_hits=5, window_seconds=15 * 60)
 login_failures_by_ip = RateLimiter(max_hits=30, window_seconds=15 * 60)
 
+# Wrong passwords on the admin panel's "confirm your password": 5 per admin account within 15 minutes.
+admin_unlock_failures = RateLimiter(max_hits=5, window_seconds=15 * 60)
+
 # "Forgot password" emails: 5 per IP per hour.
 reset_requests_by_ip = RateLimiter(max_hits=5, window_seconds=60 * 60)
 
 
 def all_limiters() -> list[RateLimiter]:
-    return [login_failures_by_account, login_failures_by_ip, reset_requests_by_ip]
+    return [login_failures_by_account, login_failures_by_ip, reset_requests_by_ip, admin_unlock_failures]

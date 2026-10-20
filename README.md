@@ -331,7 +331,8 @@ The details of every phase (what, why, limits) are in [docs/ROADMAP.md](docs/ROA
 | 8 Reports | Weekly report (email + PDF + page) with an AI or rule-based summary in English / Roman Urdu / Urdu; client Settings (name, logo, time zone, team) | Client → Weekly reports / Settings |
 | 9 Shopify | Orders copied from the client's Shopify store, shown as a "Your store" section in the weekly report (the client Sales page was removed; the data API is still there) | Admin → website → Shopify store; client → Weekly reports |
 | 10 Payments, WhatsApp | "Pay online" wiring for a payment gateway (no gateway built in); weekly report on WhatsApp | Admin → Settings; client → Settings |
-| After 10: Dashboard | A Dashboard page (menu item under Overview) with tiles each person chooses (asked first), including tiles for the website's own tracked events; team logins with a password, suspend / activate / remove | Client → Dashboard, Settings |
+| After 10: Plans with videos | Plans have a **recordings (videos) limit** and a **first-month price** (for example $20, then $30). The client's Billing page shows **total / used / left** for events and videos, and the **plans on offer** with an "Ask for this plan" button. Clients are billed in **dollars** by default. Admin → Plans has a **price guide**: base price + PostHog's price above the free allowance + your commission; a client's page has an **Extra usage** box with a one-click invoice for what is over the plan | Admin → Plans, Settings → Billing; client → Billing |
+| After 10: Dashboard | A Dashboard page (menu item under Overview) with tiles each person chooses (asked first), including tiles for the website's own tracked events. Tiles are compact KPI cards (number, change since the period before, a little graph, an (i) that explains it). **Click a tile** for its full information (day-by-day trend, rankings, latest visits) with **Watch recording** buttons. Team logins with a password, suspend / activate / remove | Client → Dashboard, Settings |
 
 ### Everything in `backend/.env` (all optional except the first group)
 
@@ -387,6 +388,4 @@ No custom domain needed. The browser only talks to the Vercel site, and Vercel f
 
 Changing a `NEXT_PUBLIC_*` value needs a new Vercel deploy. Keep ONE Render instance (the background jobs run inside it), and note Render's free plan sleeps, which pauses the jobs.
 
-> If port 3000 is already used by another program, run the browser tests on another port: `$env:E2E_FRONTEND_PORT = "3100"; powershell -File e2e\run.ps1`.
-
-> If your own backend already uses port 8000, run the browser tests on another API port too: `$env:E2E_BACKEND_PORT = "8100"` (together with `E2E_FRONTEND_PORT`).
+> The browser tests use their own ports, **3100** (dashboard) and **8100** (API), so they never meet the servers you run yourself on 3000 / 8000, and they only ever stop the servers they started. To use other ports: `$env:E2E_FRONTEND_PORT = "3200"; $env:E2E_BACKEND_PORT = "8200"`.

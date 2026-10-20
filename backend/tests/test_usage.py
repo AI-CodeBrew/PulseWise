@@ -112,6 +112,26 @@ def test_missing_recording_permission_does_not_lose_the_event_counts(db, world, 
     assert db.scalar(select(UsageDaily.events).where(UsageDaily.website_id == world.site_a.id)) == 55
 
 
+def test_recordings_that_cannot_be_read_do_not_reset_the_saved_recording_counts(db, world, fake_posthog):
+    """Writing zeros would tell a client they still have all their recordings left."""
+    from app.posthog_client import AnalyticsError
+
+    day = today()
+    sync(fake_posthog, [[day.isoformat(), 40, 4]], [[day.isoformat(), 7]])  # a normal run: 7 recordings today
+    original = fake_posthog.request
+
+    async def no_recordings(ph, method, path, **kwargs):
+        if (kwargs.get("json") or {}).get("name") == "usage:recordings":
+            raise AnalyticsError(502, "forbidden", upstream_status=403, upstream_detail="missing scope")
+        return await original(ph, method, path, **kwargs)
+
+    fake_posthog.request = no_recordings
+    sync(fake_posthog, [[day.isoformat(), 55, 5]])  # events moved on, recordings unreadable this time
+    db.expire_all()
+    row = db.scalar(select(UsageDaily).where(UsageDaily.website_id == world.site_a.id, UsageDaily.day == day))
+    assert (row.events, row.recordings) == (55, 7)
+
+
 def test_one_broken_website_does_not_stop_the_others(db, world, fake_posthog):
     from app.models import Website
     from app.security import encrypt_secret

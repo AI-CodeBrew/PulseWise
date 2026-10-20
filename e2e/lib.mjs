@@ -71,10 +71,26 @@ export async function launch({ out, width = 1300, height = 900, mobile = false, 
     return r.result.result.value;
   };
 
+  let lastPassword = "";
+  let loggedInAsAdmin = false;
   const b = {
     problems,
     eval: evaluate,
-    async goto(path) { await send("Page.navigate", { url: path.startsWith("http") ? path : BASE + path }); await sleep(300); },
+    /** The admin panel asks an admin for the password once more. While this is true, goto("/admin...") answers it with the password this browser logged in with. */
+    autoUnlock: true,
+    async goto(path) {
+      await send("Page.navigate", { url: path.startsWith("http") ? path : BASE + path });
+      await sleep(300);
+      if (b.autoUnlock && loggedInAsAdmin && path.startsWith("/admin")) await b.unlockAdminIfAsked();
+    },
+    /** If the page is asking for the admin password, type it and wait for the panel to open. */
+    async unlockAdminIfAsked() {
+      await b.waitFor(`!!document.querySelector("[data-admin-unlock]") || !!document.querySelector('nav[aria-label="Admin"]')`, 30000);
+      if (!(await evaluate(`!!document.querySelector("[data-admin-unlock]")`))) return;
+      await b.fill("[data-admin-unlock] input[type=password]", lastPassword);
+      await evaluate(`document.querySelector("[data-admin-unlock] button[type=submit]").click()`);
+      await b.waitFor(`!!document.querySelector('nav[aria-label="Admin"]')`, 30000);
+    },
     path: () => evaluate("location.pathname + location.search"),
     text: () => evaluate("document.body.innerText"),
     async waitFor(expression, ms = 20000) {
@@ -116,8 +132,24 @@ export async function launch({ out, width = 1300, height = 900, mobile = false, 
         if (!el) return false; el.click(); return true; })()`);
       if (!ok) throw new Error(`No button/link "${text}" (page: ${(await b.text()).slice(0, 200)})`);
     },
+    /**
+     * A REAL mouse click (move, press, release) in the middle of the element, like a person's: it lands on whatever is on top
+     * at that spot, so a covered or non-clickable area is noticed (element.click() would not notice). Returns what was under the mouse.
+     */
+    async realClick(selector) {
+      const spot = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null;
+        el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        const top = document.elementFromPoint(x, y); return { x, y, top: top ? top.tagName + (top.getAttribute("aria-label") ? "[" + top.getAttribute("aria-label") + "]" : "") : null }; })()`);
+      if (!spot) throw new Error(`Nothing to click: ${selector}`);
+      for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+        await send("Input.dispatchMouseEvent", { type, x: spot.x, y: spot.y, button: type === "mouseMoved" ? "none" : "left", clickCount: type === "mouseMoved" ? 0 : 1 });
+      }
+      return spot.top;
+    },
     submit: () => evaluate(`document.querySelector("form button[type=submit]").click()`),
     async login(email, password) {
+      lastPassword = password;
+      loggedInAsAdmin = email === creds.admin[0];
       await b.goto("/login");
       await b.fill("input[type=email]", email);
       await b.fill("input[type=password]", password);
@@ -129,6 +161,9 @@ export async function launch({ out, width = 1300, height = 900, mobile = false, 
     },
     async apiStatus(path) {  // a request from inside the page, with its login cookie
       return evaluate(`fetch(${JSON.stringify(API + path)}, { credentials: "include" }).then((r) => r.status)`);
+    },
+    async apiJson(path) {  // the JSON answer of a request from inside the page, with its login cookie
+      return evaluate(`fetch(${JSON.stringify(API + path)}, { credentials: "include" }).then((r) => r.json())`);
     },
     close() { try { ws.close(); } catch { /* ignore */ } proc.kill(); },
   };

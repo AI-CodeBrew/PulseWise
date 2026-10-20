@@ -1,6 +1,7 @@
 "use client";
 
-import { InvoiceTable, SupportLinks, UsageMeter } from "@/components/billing/parts";
+import { PlanChoices } from "@/components/billing/PlanChoices";
+import { InvoiceTable, QuotaMeter, SupportLinks, UsageMeter } from "@/components/billing/parts";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Message } from "@/components/ui/Form";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -8,7 +9,7 @@ import { Async, EmptyState, Skeleton } from "@/components/ui/States";
 import { useApi } from "@/hooks/useApi";
 import { useCurrentSite } from "@/hooks/useSite";
 import { FEATURE_LABELS } from "@/lib/features";
-import { formatDate, formatMoney } from "@/lib/format";
+import { formatDate, formatMoney, timeAgo } from "@/lib/format";
 import type { BillingSummary, FeatureName } from "@/lib/types";
 
 /** The client's own plan, usage and invoices. Only account owners (and admins) can open it. */
@@ -53,8 +54,16 @@ export default function BillingPage() {
                     {b.plan && b.subscription ? (
                       <>
                         <p className="text-xl font-semibold text-ink">{b.plan.name}</p>
-                        <p className="mt-0.5 text-sm text-ink-2">
-                          {money(b.plan.price)} per month · next invoice on {formatDate(b.subscription.next_invoice_date)}
+                        <p className="mt-0.5 text-sm text-ink-2">{money(b.plan.price)} per month</p>
+                        <p className="mt-0.5 text-sm text-ink-2" data-next-invoice>
+                          {b.subscription.next_invoice_amount > 0 ? (
+                            <>
+                              Next invoice: <strong className="text-ink">{money(b.subscription.next_invoice_amount)}</strong> on {formatDate(b.subscription.next_invoice_date)}
+                              {b.subscription.next_invoice_is_intro && ` (first month price, then ${money(b.plan.price)} a month)`}
+                            </>
+                          ) : (
+                            "Nothing to pay for now."
+                          )}
                         </p>
                         <ul className="mt-4 grid grid-cols-1 gap-1.5 text-sm sm:grid-cols-2">
                           {(Object.keys(FEATURE_LABELS) as FeatureName[]).map((f) => (
@@ -74,15 +83,41 @@ export default function BillingPage() {
                 </Card>
 
                 <Card>
-                  <CardHeader title="This month's usage" subtitle="Resets on the 1st" />
-                  <div className="space-y-5 px-4 pb-5 sm:px-5">
-                    <UsageMeter label="Visitor events" used={b.usage.events} limit={b.usage.event_limit} />
+                  <CardHeader
+                    title="This month's usage"
+                    subtitle={`Resets on the 1st${b.usage.updated_at ? ` · counted ${timeAgo(b.usage.updated_at)}` : ""}`}
+                  />
+                  <div className="space-y-6 px-4 pb-5 sm:px-5">
+                    <QuotaMeter
+                      label="Visitor events"
+                      hint="Page views, clicks and the other things your visitors do"
+                      used={b.usage.events}
+                      limit={b.usage.event_limit}
+                      remaining={b.usage.event_remaining}
+                      over={b.usage.event_over}
+                    />
+                    {b.features.recordings ? (
+                      <QuotaMeter
+                        label="Recordings (videos)"
+                        hint="Each recorded visit counts as one video"
+                        used={b.usage.recordings}
+                        limit={b.usage.recording_limit}
+                        remaining={b.usage.recording_remaining}
+                        over={b.usage.recording_over}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted">Recordings (videos of visits) are not part of your plan.</p>
+                    )}
                     <UsageMeter label="Websites" used={b.usage.websites} limit={b.usage.max_websites} />
                     <UsageMeter label="People with access" used={b.usage.members} limit={b.usage.max_members} />
                     <p className="text-xs text-muted">Going over a limit doesn&apos;t switch anything off. We&apos;ll just get in touch about a better-fitting plan.</p>
                   </div>
                 </Card>
               </div>
+
+              {b.available_plans && (
+                <PlanChoices plans={b.available_plans} currentPlanId={b.plan?.id ?? null} currency={b.client.currency} businessName={b.client.name} support={b.support} />
+              )}
 
               <Card>
                 <CardHeader title="Invoices" />

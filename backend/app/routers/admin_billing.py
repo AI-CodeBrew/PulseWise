@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from app import pricing
 from app.audit import audit
 from app.billing import notifications
+from app.billing.extra_usage import create_extra_usage_invoice, extra_usage
 from app.billing.service import (
     FEATURES,
     BillingError,
@@ -31,7 +32,7 @@ from app.billing.summary import billing_summary, invoice_dict, num, plan_dict
 from app.deps import AdminUser, DbSession, client_ip, require_admin
 from app.models import PAYMENT_METHODS, Client, Invoice, Payment, Plan, Subscription
 from app.params import CursorParam, LimitParam, decode_cursor, encode_cursor
-from app.routers.admin_ops import month_range, usage_by_website
+from app.routers.admin_ops import MonthParam, month_range, usage_by_website
 from app.settings_store import get_setting
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -75,7 +76,11 @@ class PlanIn(BaseModel):
     description: str | None = Field(default=None, max_length=1000)
     price_pkr: BigMoney = Decimal("0")
     price_usd: BigMoney = Decimal("0")
+    intro_price_pkr: BigMoney | None = None  # the price of the first month(s); None = no introductory price
+    intro_price_usd: BigMoney | None = None
+    intro_months: int = Field(default=1, ge=1, le=12)
     monthly_event_limit: int | None = Field(default=None, ge=1)  # None = unlimited
+    monthly_recording_limit: int | None = Field(default=None, ge=1)  # recordings = "videos"; None = unlimited
     max_websites: int | None = Field(default=None, ge=1)
     max_team_members: int | None = Field(default=None, ge=1)
     features: dict[str, Any] = Field(default_factory=dict)
@@ -88,7 +93,11 @@ class PlanPatch(BaseModel):
     description: str | None = Field(default=None, max_length=1000)
     price_pkr: BigMoney | None = None
     price_usd: BigMoney | None = None
+    intro_price_pkr: BigMoney | None = None
+    intro_price_usd: BigMoney | None = None
+    intro_months: int | None = Field(default=None, ge=1, le=12)
     monthly_event_limit: int | None = Field(default=None, ge=1)
+    monthly_recording_limit: int | None = Field(default=None, ge=1)
     max_websites: int | None = Field(default=None, ge=1)
     max_team_members: int | None = Field(default=None, ge=1)
     features: dict[str, Any] | None = None
@@ -104,25 +113,66 @@ def _slug(db, name: str) -> str:
     return slug
 
 
+def _quote(db, events: int, recordings: int) -> dict[str, Any]:
+    """What a plan with these monthly amounts SHOULD cost: base price + the provider's price above its free allowance + our commission."""
+    return pricing.suggest_price(
+        events, recordings, base_usd=float(get_setting(db, "billing.base_price_usd")),
+        commission_percent=float(get_setting(db, "billing.commission_percent")), usd_to_pkr=float(get_setting(db, "billing.usd_to_pkr")),
+    )
+
+
+def _plan_row(db, plan: Plan) -> dict[str, Any]:
+    # An "unlimited" plan can't be priced from its limits, so it has no suggestion.
+    quote = _quote(db, plan.monthly_event_limit, plan.monthly_recording_limit) if plan.monthly_event_limit and plan.monthly_recording_limit else None
+    return {**plan_dict(plan), "quote": quote}
+
+
+def _check_intro_prices(plan: Plan) -> None:
+    """A first-month price above the normal price is almost certainly a typing mistake."""
+    for intro, regular, currency in ((plan.intro_price_usd, plan.price_usd, "USD"), (plan.intro_price_pkr, plan.price_pkr, "PKR")):
+        if intro is not None and money(intro) > money(regular):
+            raise _bad(f"The first-month price ({currency}) can't be higher than the normal monthly price.")
+
+
+def _optional_money(value: Decimal | None) -> Decimal | None:
+    return None if value is None else money(value)
+
+
 @router.get("/plans", summary="All plans, with how many clients are on each")
 def list_plans(db: DbSession):
     counts = dict(db.execute(select(Subscription.plan_id, func.count()).where(Subscription.status == "active").group_by(Subscription.plan_id)).all())
-    return {"results": [{**plan_dict(p), "clients": counts.get(p.id, 0)} for p in db.scalars(select(Plan).order_by(Plan.sort_order, Plan.name))]}
+    return {
+        "results": [{**_plan_row(db, p), "clients": counts.get(p.id, 0)} for p in db.scalars(select(Plan).order_by(Plan.sort_order, Plan.name))],
+        # what PostHog gives away free every month (the Plans page offers it as a starting point for a plan's limits)
+        "free_allowance": {"events": int(pricing.FREE_EVENTS), "recordings": int(pricing.FREE_RECORDINGS)},
+    }
+
+
+@router.get("/pricing/quote", summary="What a plan with these monthly amounts should cost (base price + PostHog's price above the free allowance + your commission)")
+def pricing_quote(
+    db: DbSession,
+    events: Annotated[int, Query(ge=1, le=10_000_000_000)],
+    recordings: Annotated[int, Query(ge=1, le=1_000_000_000)],
+):
+    return _quote(db, events, recordings)
 
 
 @router.post("/plans", status_code=201, summary="Create a plan")
 def create_plan(body: PlanIn, request: Request, admin: AdminUser, db: DbSession):
     plan = Plan(
         name=body.name.strip(), slug=_slug(db, body.name), description=(body.description or "").strip() or None,
-        price_pkr=money(body.price_pkr), price_usd=money(body.price_usd), monthly_event_limit=body.monthly_event_limit,
+        price_pkr=money(body.price_pkr), price_usd=money(body.price_usd),
+        intro_price_pkr=_optional_money(body.intro_price_pkr), intro_price_usd=_optional_money(body.intro_price_usd), intro_months=body.intro_months,
+        monthly_event_limit=body.monthly_event_limit, monthly_recording_limit=body.monthly_recording_limit,
         max_websites=body.max_websites, max_team_members=body.max_team_members, features=_features(body.features),
         is_active=body.is_active, sort_order=body.sort_order,
     )
+    _check_intro_prices(plan)
     db.add(plan)
     db.flush()
     audit(db, "admin.plan_created", actor_id=admin.id, target_type="plan", target_id=plan.id, ip=client_ip(request), details={"name": plan.name})
     db.commit()
-    return plan_dict(plan)
+    return _plan_row(db, plan)
 
 
 @router.patch("/plans/{plan_id}", summary="Edit a plan (new prices apply to FUTURE invoices only)")
@@ -131,20 +181,30 @@ def update_plan(plan_id: uuid.UUID, body: PlanPatch, request: Request, admin: Ad
     if plan is None:
         raise HTTPException(status_code=404, detail="Plan not found.")
     changes = body.model_dump(exclude_unset=True)
-    for field in ("name", "monthly_event_limit", "max_websites", "max_team_members", "is_active", "sort_order"):
-        if field in changes:
+    for field in ("monthly_event_limit", "monthly_recording_limit", "max_websites", "max_team_members"):
+        if field in changes:  # null = unlimited
+            setattr(plan, field, changes[field])
+    for field in ("name", "intro_months", "is_active", "sort_order"):
+        if changes.get(field) is not None:  # (these can't be empty)
             setattr(plan, field, changes[field].strip() if field == "name" else changes[field])
     if "description" in changes:
         plan.description = (changes["description"] or "").strip() or None
-    if "price_pkr" in changes:
-        plan.price_pkr = money(changes["price_pkr"])
-    if "price_usd" in changes:
-        plan.price_usd = money(changes["price_usd"])
+    for field in ("price_pkr", "price_usd"):
+        if changes.get(field) is not None:
+            setattr(plan, field, money(changes[field]))
+    for field in ("intro_price_pkr", "intro_price_usd"):
+        if field in changes:  # null = take the introductory price away
+            setattr(plan, field, _optional_money(changes[field]))
     if "features" in changes and changes["features"] is not None:
         plan.features = _features(changes["features"])
+    try:
+        _check_intro_prices(plan)
+    except HTTPException:
+        db.rollback()  # nothing of this edit is kept
+        raise
     audit(db, "admin.plan_updated", actor_id=admin.id, target_type="plan", target_id=plan.id, ip=client_ip(request), details={"fields": sorted(changes)})
     db.commit()
-    return plan_dict(plan)
+    return _plan_row(db, plan)
 
 
 @router.delete("/plans/{plan_id}", summary="Delete a plan nobody has ever used")
@@ -294,6 +354,30 @@ def create_manual_invoice(client_id: uuid.UUID, body: ManualInvoiceIn, request: 
         raise _bad(str(exc)) from None
     audit(db, "admin.invoice_created", actor_id=admin.id, target_type="invoice", target_id=invoice.id, ip=client_ip(request),
           details={"number": invoice.number, "client_id": str(client.id), "amount": str(invoice.amount), "source": "manual"})
+    db.commit()
+    return invoice_dict(invoice, with_payments=True)
+
+
+class ExtraUsageIn(BaseModel):
+    month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")  # YYYY-MM, default: this month
+
+
+@router.get("/clients/{client_id}/extra-usage", summary="What a client used above their plan in a month, priced at PostHog's price + your commission")
+def client_extra_usage(client_id: uuid.UUID, db: DbSession, month: MonthParam = None):
+    first, _ = month_range(month)
+    return extra_usage(db, _get_client(db, client_id), first)
+
+
+@router.post("/clients/{client_id}/extra-usage-invoice", status_code=201, summary="Create the invoice for that extra usage (once per month)")
+def create_extra_usage_invoice_api(client_id: uuid.UUID, body: ExtraUsageIn, request: Request, admin: AdminUser, db: DbSession):
+    client = _get_client(db, client_id)
+    first, _ = month_range(body.month)
+    try:
+        invoice = create_extra_usage_invoice(db, client, first)
+    except BillingError as exc:
+        raise _bad(str(exc), 409) from None
+    audit(db, "admin.invoice_created", actor_id=admin.id, target_type="invoice", target_id=invoice.id, ip=client_ip(request),
+          details={"number": invoice.number, "client_id": str(client.id), "amount": str(invoice.amount), "source": "usage", "month": first.strftime("%Y-%m")})
     db.commit()
     return invoice_dict(invoice, with_payments=True)
 

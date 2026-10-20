@@ -31,6 +31,13 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
   onUnauthorized = handler;
 }
 
+// The admin panel closes itself after a while without use: any request that answers "423 locked" lands here,
+// so the screen can ask for the password again instead of showing an error.
+let onAdminLocked: (() => void) | null = null;
+export function setAdminLockedHandler(handler: (() => void) | null) {
+  onAdminLocked = handler;
+}
+
 interface RequestOptions {
   params?: QueryParams;
   body?: unknown;
@@ -67,6 +74,7 @@ async function request<T>(method: Method, path: string, options: RequestOptions 
 
   if (!response.ok) {
     if (response.status === 401 && !options.quiet401) onUnauthorized?.();
+    if (response.status === 423) onAdminLocked?.();
     throw new ApiError(response.status, await readErrorMessage(response));
   }
   return (await response.json()) as T;

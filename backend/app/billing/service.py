@@ -79,23 +79,74 @@ def has_feature(db: Session, client_id: uuid.UUID, feature: str) -> bool:
 
 
 def price_for(client: Client, subscription: Subscription) -> Decimal:
-    """What the client pays per month, in the client's currency."""
+    """What the client pays per month, in the client's currency (the normal price, not the introductory one)."""
     if subscription.price_override is not None:
         return money(subscription.price_override)
     plan = subscription.plan
     return money(plan.price_usd if client.currency == "USD" else plan.price_pkr)
 
 
-def month_events(db: Session, client_id: uuid.UUID, today: date | None = None) -> int:
-    """Events this calendar month across all of the client's websites."""
-    today = today or today_utc()
-    first = today.replace(day=1)
-    total = db.scalar(
-        select(func.coalesce(func.sum(UsageDaily.events), 0))
+def intro_price_for(client: Client, subscription: Subscription) -> Decimal | None:
+    """The plan's introductory price in the client's currency (None = this plan has none)."""
+    plan = subscription.plan
+    price = plan.intro_price_usd if client.currency == "USD" else plan.intro_price_pkr
+    return None if price is None else money(price)
+
+
+def first_billing_date(subscription: Subscription) -> date:
+    """The day of a subscription's FIRST invoice: the billing day on or after the start date."""
+    start = subscription.started_at
+    if start.day <= subscription.billing_day:
+        return start.replace(day=subscription.billing_day)
+    return (start.replace(day=1) + timedelta(days=32)).replace(day=subscription.billing_day)
+
+
+def billed_month_number(subscription: Subscription, period_start: date) -> int:
+    """1 for the first billed month of a subscription, 2 for the second... (counted by the calendar, not by invoices,
+    so a free first month or a cancelled invoice can't make the introductory price last longer)."""
+    first = first_billing_date(subscription)
+    return (period_start.year - first.year) * 12 + (period_start.month - first.month) + 1
+
+
+def invoice_price_for(client: Client, subscription: Subscription, period_start: date) -> tuple[Decimal, bool]:
+    """What the invoice for the month starting `period_start` costs, and whether that is the introductory price.
+
+    A special price for one client (price_override) always wins. Otherwise the first `intro_months` billed months
+    cost the plan's introductory price (if it has one), and every month after that the normal price.
+    """
+    if subscription.price_override is not None:
+        return money(subscription.price_override), False
+    intro = intro_price_for(client, subscription)
+    if intro is not None and billed_month_number(subscription, period_start) <= subscription.plan.intro_months:
+        return intro, True
+    return price_for(client, subscription), False
+
+
+def next_invoice_start(db: Session, subscription: Subscription, today: date) -> date:
+    """The first day of the billing period the NEXT invoice will cover."""
+    first = first_billing_date(subscription)
+    if first > today:
+        return first  # billing hasn't begun yet
+    latest = latest_billing_date(subscription.billing_day, today)
+    if latest == today and db.scalar(select(Invoice.id).where(Invoice.subscription_id == subscription.id, Invoice.period_start == latest)) is None:
+        return latest  # due today: the daily job just hasn't issued it yet
+    return next_billing_date(subscription.billing_day, today)
+
+
+def usage_between(db: Session, client_id: uuid.UUID, first: date, last: date) -> tuple[int, int]:
+    """(events, recordings) of all the client's websites from `first` to `last`, both days included."""
+    events, recordings = db.execute(
+        select(func.coalesce(func.sum(UsageDaily.events), 0), func.coalesce(func.sum(UsageDaily.recordings), 0))
         .join(Website, Website.id == UsageDaily.website_id)
-        .where(Website.client_id == client_id, UsageDaily.day >= first, UsageDaily.day <= today)
-    )
-    return int(total or 0)
+        .where(Website.client_id == client_id, UsageDaily.day >= first, UsageDaily.day <= last)
+    ).one()
+    return int(events or 0), int(recordings or 0)
+
+
+def month_usage(db: Session, client_id: uuid.UUID, today: date | None = None) -> tuple[int, int]:
+    """(events, recordings) this calendar month across all of the client's websites."""
+    today = today or today_utc()
+    return usage_between(db, client_id, today.replace(day=1), today)
 
 
 def check_website_limit(db: Session, client_id: uuid.UUID) -> None:
@@ -202,15 +253,16 @@ def generate_due_invoices(db: Session, today: date | None = None) -> list[Invoic
             continue  # billing hasn't begun yet
         if db.scalar(select(Invoice.id).where(Invoice.subscription_id == sub.id, Invoice.period_start == start)):
             continue  # already invoiced
-        amount = price_for(client, sub)
+        amount, intro = invoice_price_for(client, sub, start)
         if amount <= 0:
-            continue  # a free plan
+            continue  # a free plan (or a free first month)
         end = next_billing_date(sub.billing_day, today) - timedelta(days=1)
+        kind = ("first month price" if sub.plan.intro_months == 1 else "introductory price") if intro else None
         try:
             invoice = create_invoice(
                 db, client, amount=amount, subscription=sub, period_start=start, period_end=end,
                 issue_date=today, due_date=today + timedelta(days=terms), source="auto",
-                line_items=[{"description": f"{sub.plan.name} plan ({start:%d %b %Y} to {end:%d %b %Y})", "amount": str(amount)}],
+                line_items=[{"description": f"{sub.plan.name} plan{', ' + kind if kind else ''} ({start:%d %b %Y} to {end:%d %b %Y})", "amount": str(amount)}],
             )
         except BillingError as exc:
             log.warning("Not invoicing %s: %s", client.name, exc)

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
-import { ApiError, apiGet, apiPost, setUnauthorizedHandler } from "@/lib/api";
+import { ApiError, apiGet, apiPost, setAdminLockedHandler, setUnauthorizedHandler } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
 type Status = "loading" | "authenticated" | "anonymous" | "error";
@@ -18,6 +18,7 @@ interface AuthContextValue extends AuthState {
   setMe: (me: Me) => void; // after logging in
   refresh: () => void;
   logout: () => Promise<void>;
+  lockAdmin: () => Promise<void>; // close the admin panel (the password is asked again next time)
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -53,6 +54,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, []);
 
+  // The admin panel locked itself (a quiet while): keep the person logged in, but ask for the password again.
+  useEffect(() => {
+    setAdminLockedHandler(() => setState((now) => (now.me ? { ...now, me: { ...now.me, admin_unlocked: false } } : now)));
+    return () => setAdminLockedHandler(null);
+  }, []);
+
   const setMe = useCallback((me: Me) => setState({ status: "authenticated", me, error: null, loggedOut: false }), []);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
   const logout = useCallback(async () => {
@@ -63,7 +70,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  return <AuthContext.Provider value={{ ...state, setMe, refresh, logout }}>{children}</AuthContext.Provider>;
+  const lockAdmin = useCallback(async () => {
+    try {
+      const me = await apiPost<Me>("/api/auth/admin-lock");
+      setState({ status: "authenticated", me, error: null, loggedOut: false });
+    } catch {
+      // (offline: nothing changed, the panel simply stays as it is)
+    }
+  }, []);
+
+  return <AuthContext.Provider value={{ ...state, setMe, refresh, logout, lockAdmin }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {

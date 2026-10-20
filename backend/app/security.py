@@ -69,6 +69,7 @@ RESET_TOKEN = "reset"
 RESET_TOKEN_MINUTES = 60
 INVITE_DAYS = 7  # how long a "set your password" invitation link works
 VIEWAS_TOKEN = "viewas"  # an admin looking at the dashboard as a client sees it
+ADMIN_TOKEN = "admin"  # "this admin confirmed their password": opens the admin panel for a while
 
 
 class TokenError(Exception):

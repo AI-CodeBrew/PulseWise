@@ -81,6 +81,66 @@ export function UsageMeter({ label, used, limit }: { label: string; used: number
   );
 }
 
+/**
+ * Events or recordings against the plan, as three plain numbers (Total / Used / Left) and a bar.
+ * With no limit there is no "left": it says "No limit" instead. The words carry the state, not just the colour.
+ */
+export function QuotaMeter({
+  label,
+  hint,
+  used,
+  limit,
+  remaining,
+  over,
+}: {
+  label: string;
+  hint?: string;
+  used: number;
+  limit: number | null;
+  remaining: number | null;
+  over: number;
+}) {
+  const percent = limit ? (used / limit) * 100 : 0;
+  const state = !limit ? null : over > 0 ? "over" : percent >= 80 ? "close" : "ok";
+  const stats = [
+    { name: "Total", value: limit ? formatNumber(limit) : "No limit" },
+    { name: "Used", value: formatNumber(used) },
+    { name: over > 0 ? "Over by" : "Left", value: !limit ? "—" : formatNumber(over > 0 ? over : (remaining ?? 0)), tone: state },
+  ];
+  return (
+    <div role="group" aria-label={label} data-quota={label}>
+      <h3 className="text-sm font-medium text-ink">{label}</h3>
+      {hint && <p className="text-xs text-muted">{hint}</p>}
+      <dl className="mt-2 grid grid-cols-3 gap-3">
+        {stats.map((stat) => (
+          <div key={stat.name} className="min-w-0">
+            <dt className="text-xs text-muted">{stat.name}</dt>
+            <dd className={`break-words text-lg font-semibold tabular-nums ${stat.tone === "over" ? "text-bad" : "text-ink"}`}>{stat.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {limit ? (
+        <>
+          <div
+            className="mt-2 h-2 overflow-hidden rounded-full bg-surface-2"
+            role="progressbar"
+            aria-label={`${label} used`}
+            aria-valuemin={0}
+            aria-valuemax={limit}
+            aria-valuenow={Math.min(used, limit)}
+          >
+            <div className={`h-full rounded-full ${state === "over" ? "bg-bad" : "bg-accent"}`} style={{ width: `${Math.min(percent, 100)}%` }} />
+          </div>
+          <p className={`mt-1 text-xs ${state === "ok" ? "text-muted" : "text-ink"}`}>
+            {state === "over" ? "✕ Over the limit: " : state === "close" ? "▲ Close to the limit: " : ""}
+            {percent.toFixed(percent < 10 ? 1 : 0)}% used
+          </p>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function InvoiceTable({
   invoices,
   clientId,

@@ -29,7 +29,7 @@ export const ADMIN_NAV: { href: string; label: string }[] = [
 /** Frame for every /admin page: a top bar, and the admin menu (left on desktop, scrollable row on phones). */
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { me, logout } = useAuth();
+  const { me, logout, lockAdmin } = useAuth();
   const alerts = useApi<ListResponse<AdminAlert> & { open_count: number }>("/api/admin/alerts", { limit: 1 });
   const openAlerts = alerts.data?.open_count ?? 0;
 
@@ -69,6 +69,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="border-t border-line px-3 py-3 text-sm">
           <button
             type="button"
+            onClick={() => void lockAdmin()}
+            className="block w-full rounded-lg px-3 py-1.5 text-left text-ink-2 hover:bg-surface-2 hover:text-ink"
+          >
+            Lock admin panel
+          </button>
+          <button
+            type="button"
             onClick={logout}
             className="block w-full rounded-lg px-3 py-1.5 text-left text-ink-2 hover:bg-surface-2 hover:text-ink"
           >
@@ -80,8 +87,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
       {/* Phones: the same menu as a row you can scroll sideways */}
       <header className="sticky top-0 z-30 border-b border-line bg-page/90 backdrop-blur lg:hidden">
-        <div className="flex h-12 items-center px-4">
+        <div className="flex h-12 items-center justify-between px-4">
           <span className="font-semibold text-ink">Admin</span>
+          <button type="button" onClick={() => void lockAdmin()} className="rounded-lg px-2 py-1 text-sm text-ink-2 hover:bg-surface-2 hover:text-ink">
+            Lock
+          </button>
         </div>
         <nav aria-label="Admin" className="flex gap-1 overflow-x-auto px-3 pb-2">
           {ADMIN_NAV.map((item) => (

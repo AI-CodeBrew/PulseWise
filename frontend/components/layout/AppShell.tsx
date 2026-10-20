@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { ViewAsBanner } from "@/components/admin/ViewAsBanner";
@@ -15,6 +16,8 @@ import { WebsiteSwitcher } from "./WebsiteSwitcher";
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // "7 / 30 / 90 days" only belongs on pages it changes: not on the dashboard tiles (each has its own period), billing, settings or reports.
+  const hasDateRange = !/^\/sites\/[^/]+\/(dashboard|billing|settings|reports)(\/|$)/.test(usePathname() ?? "");
 
   return (
     <div className="min-h-screen lg:pl-60">
@@ -61,9 +64,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex min-w-0 flex-1">
             <WebsiteSwitcher />
           </div>
-          <div className="shrink-0">
-            <DateRangeSelector />
-          </div>
+          {hasDateRange && (
+            <div className="shrink-0">
+              <DateRangeSelector />
+            </div>
+          )}
         </div>
       </header>
 

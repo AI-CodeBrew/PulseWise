@@ -212,6 +212,8 @@ export interface SupportInfo {
 /** GET /api/auth/me */
 export interface Me {
   user: CurrentUser;
+  /** Admins only: have they typed their password again for the admin panel? (It closes itself after a while.) */
+  admin_unlocked: boolean;
   websites: WebsiteSummary[];
   /** Set while an admin is looking at the dashboard exactly as a client sees it (read-only). */
   view_as: { client_id: string; client_name: string } | null;
@@ -436,6 +438,21 @@ export interface AdminSetting {
 
 export type Currency = "PKR" | "USD";
 
+/** What a plan SHOULD cost: a base price + the analytics provider's price above its free allowance + your commission. Admin only. */
+export interface PlanQuote {
+  events: number;
+  recordings: number;
+  provider_events_usd: number;
+  provider_recordings_usd: number;
+  provider_usd: number; // what the provider would charge us for these amounts
+  commission_percent: number;
+  commission_usd: number;
+  base_usd: number;
+  suggested_usd: number;
+  suggested_pkr: number;
+  usd_to_pkr: number;
+}
+
 export interface Plan {
   id: string;
   name: string;
@@ -444,13 +461,36 @@ export interface Plan {
   price_pkr: number;
   price_usd: number;
   price: number; // in the client's currency
+  /** The price of the first month(s); null = no introductory price. */
+  intro_price_pkr: number | null;
+  intro_price_usd: number | null;
+  intro_price: number | null; // in the client's currency
+  intro_months: number;
   monthly_event_limit: number | null;
+  /** Recordings ("videos") per month; null = unlimited. */
+  monthly_recording_limit: number | null;
   max_websites: number | null;
   max_team_members: number | null;
   features: Features;
   is_active: boolean;
   sort_order: number;
   clients?: number; // admin list only
+  quote?: PlanQuote | null; // admin list only; null for an unlimited plan
+}
+
+/** A plan as a CLIENT sees it on their Billing page: only what is on offer (never internal numbers like the price guide). */
+export interface ClientPlan {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number; // per month, in the client's currency
+  intro_price: number | null; // the first-month price, in the client's currency
+  intro_months: number;
+  monthly_event_limit: number | null;
+  monthly_recording_limit: number | null;
+  max_websites: number | null;
+  max_team_members: number | null;
+  features: Features;
 }
 
 export interface InvoiceRow {
@@ -468,7 +508,7 @@ export interface InvoiceRow {
   balance: number;
   paid_at: string | null;
   emailed_at: string | null;
-  source: "auto" | "manual";
+  source: "auto" | "manual" | "usage";
   line_items: { description: string; amount: string }[];
   notes: string | null;
   payments?: { id: string; amount: number; method: string; reference: string | null; note: string | null; paid_at: string; provider: string }[];
@@ -476,18 +516,74 @@ export interface InvoiceRow {
   client_name?: string;
 }
 
+/** This calendar month's usage against the plan. A limit of null means "no limit" (and nothing is "left"). */
+export interface BillingUsage {
+  events: number;
+  event_limit: number | null;
+  event_remaining: number | null;
+  event_over: number;
+  percent: number | null;
+  /** Recordings = "videos" of visits. */
+  recordings: number;
+  recording_limit: number | null;
+  recording_remaining: number | null;
+  recording_over: number;
+  recording_percent: number | null;
+  /** When the counts were last refreshed (they are updated every hour). */
+  updated_at: string | null;
+  websites: number;
+  max_websites: number | null;
+  members: number;
+  max_members: number | null;
+}
+
 export interface BillingSummary {
   client: { id: string; name: string; currency: Currency; status: "active" | "suspended"; suspended_reason: string | null };
   plan: Plan | null;
-  subscription: { id: string; plan_id: string; started_at: string; billing_day: number; price_override: number | null; next_invoice_date: string } | null;
+  subscription: {
+    id: string;
+    plan_id: string;
+    started_at: string;
+    billing_day: number;
+    price_override: number | null;
+    next_invoice_date: string;
+    /** What the next invoice costs, and whether that is the introductory ("first month") price. */
+    next_invoice_amount: number;
+    next_invoice_is_intro: boolean;
+  } | null;
   features: Features;
-  usage: { events: number; event_limit: number | null; percent: number | null; websites: number; max_websites: number | null; members: number; max_members: number | null };
+  usage: BillingUsage;
   invoices: InvoiceRow[];
   outstanding: { amount: number; count: number; overdue_count: number };
   payment_instructions: string;
+  /** The plans the client could choose from (only in the client's own Billing answer, not in the admin's). */
+  available_plans?: ClientPlan[];
   /** True when a payment gateway is switched on: open invoices then get a "Pay online" button. */
   online_payments: boolean;
   support: SupportInfo;
+}
+
+/** Admin only: what a client used above their plan in a month, priced at the provider's price + your commission. */
+export interface ExtraUsagePart {
+  used: number;
+  included: number | null;
+  over: number;
+  provider_usd: number;
+  amount: number; // in the client's currency, commission included
+}
+
+export interface ExtraUsage {
+  month: string; // "2026-10"
+  plan: string | null;
+  currency: Currency;
+  commission_percent: number;
+  events: ExtraUsagePart;
+  recordings: ExtraUsagePart;
+  lines: { description: string; amount: string }[];
+  provider_usd: number;
+  amount: number;
+  already_invoiced: { id: string; number: string; status: "open" | "paid" | "void"; amount: number } | null;
+  can_invoice: boolean;
 }
 
 export interface BusinessOverview {
@@ -634,10 +730,23 @@ export interface TileCatalog {
 
 export interface TileValue {
   key: string;
+  /** The full name with its period: "Sessions (last 7 days)" (the chooser and the box use it). */
   title: string;
+  /** The short name for the card: "Sessions". */
+  label: string;
   description: string;
   kind: TileKind;
+  /** How many days the number covers (7 or 30). */
+  days: number;
+  /** Which way is good news: "up", or "down" for "left after 1 page". */
+  better: "up" | "down";
   value: number | string;
+  /** The same number for the period just before (null = nothing to compare with, e.g. the text tiles). */
+  previous: number | null;
+  /** One number per day for the little graph, oldest first (null = no graph). */
+  series: number[] | null;
+  /** True when there is nothing to average or rank yet (no visits in the period): the card shows "—", not a fake 0. */
+  empty: boolean;
 }
 
 /** GET /dashboard/tiles: `configured: false` = this person never chose, so we ask first. */
@@ -645,3 +754,46 @@ export interface MyTiles {
   configured: boolean;
   tiles: TileValue[];
 }
+
+/** GET /dashboard/tiles/detail: the trend and breakdowns behind one tile. */
+export interface TileDetail {
+  key: string;
+  days: number;
+  period: { start: string; end: string };
+  /** The page / country / event the tile is about, when it is about one. */
+  subject: string | null;
+  series: { label: string; kind: TileKind; points: { date: string; value: number }[] };
+  breakdowns: { key: string; title: string; unit: string; kind: TileKind; rows: { name: string; value: number }[] }[];
+}
+
+export interface TileVisitRow {
+  session_id: string;
+  started_at: string;
+  duration: number;
+  pageviews: number;
+  entry_page: string;
+  visitor: string;
+  /** true = there is a recording to watch, false = this visit wasn't recorded, null = not known (plan, or lookup failed). */
+  has_recording: boolean | null;
+}
+
+export interface TileEventRow {
+  id: string;
+  event: string;
+  timestamp: string;
+  page: string;
+  visitor: string;
+  session_id: string | null;
+  has_recording: boolean | null;
+}
+
+/** GET /dashboard/tiles/recent: the latest rows behind one tile. */
+interface TileRecentBase {
+  key: string;
+  days: number;
+  title: string;
+  /** A message when the plan doesn't include this list (then `rows` is empty). */
+  locked: string | null;
+  recordings: { locked: string | null; checked: boolean };
+}
+export type TileRecent = (TileRecentBase & { kind: "sessions"; rows: TileVisitRow[] }) | (TileRecentBase & { kind: "events"; rows: TileEventRow[] });

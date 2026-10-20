@@ -33,9 +33,12 @@ ALL_FEATURES = {"sessions": True, "people": True, "live_events": True, "recordin
 NO_FEATURES = {k: False for k in ALL_FEATURES}
 
 
-def make_plan(db, name="Growth", pkr="8000", usd="29", events=500_000, websites=3, members=3, features=None, active=True):
-    plan = Plan(name=name, slug=name.lower(), price_pkr=Decimal(pkr), price_usd=Decimal(usd), monthly_event_limit=events,
-                max_websites=websites, max_team_members=members, features=features if features is not None else dict(ALL_FEATURES), is_active=active)
+def make_plan(db, name="Growth", pkr="8000", usd="29", events=500_000, websites=3, members=3, features=None, active=True,
+              recordings=None, intro_usd=None, intro_pkr=None, intro_months=1):
+    plan = Plan(name=name, slug=name.lower(), price_pkr=Decimal(pkr), price_usd=Decimal(usd), monthly_event_limit=events, monthly_recording_limit=recordings,
+                intro_price_usd=Decimal(intro_usd) if intro_usd is not None else None, intro_price_pkr=Decimal(intro_pkr) if intro_pkr is not None else None,
+                intro_months=intro_months, max_websites=websites, max_team_members=members,
+                features=features if features is not None else dict(ALL_FEATURES), is_active=active)
     db.add(plan)
     db.commit()
     return plan
@@ -443,7 +446,8 @@ def test_the_billing_page_reports_usage_against_the_plan(api, db, world):
     db.add(UsageDaily(website_id=world.site_a.id, day=datetime.now(timezone.utc).date(), events=250))
     db.commit()
     usage = api("alice@a.test").get(f"/api/clients/{world.client_a.id}/billing").json()["usage"]
-    assert usage == {"events": 250, "event_limit": 1000, "percent": 25.0, "websites": 1, "max_websites": 2, "members": 2, "max_members": 5}
+    assert usage["events"] == 250 and usage["event_limit"] == 1000 and usage["percent"] == 25.0
+    assert (usage["websites"], usage["max_websites"], usage["members"], usage["max_members"]) == (1, 2, 2, 5)
 
 
 # ------------------------------------------------------------------ client-facing billing access

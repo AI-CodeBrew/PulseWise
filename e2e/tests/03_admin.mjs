@@ -14,6 +14,24 @@ if (!apiKey) {
 await admin.login(...creds.admin);
 await admin.waitForPath(`/sites/${ids.demoSite}`);
 
+// 0. The admin panel asks for the password once more (being logged in is not enough)
+admin.autoUnlock = false;
+await admin.goto("/admin");
+t.check("an admin who just logged in is asked for the password before the admin panel opens", await admin.waitFor(`!!document.querySelector("[data-admin-unlock]")`, 30000));
+t.check("  ...nothing of the panel is shown behind that page", await admin.eval(`!document.querySelector('nav[aria-label="Admin"]') && !document.body.innerText.includes("Admin overview")`));
+t.check("  ...and the admin tools refuse a direct call as well (423)", (await admin.apiStatus("/api/admin/alerts")) === 423);
+await admin.fill("[data-admin-unlock] input[type=password]", "not-the-password");
+await admin.eval(`document.querySelector("[data-admin-unlock] button[type=submit]").click()`);
+t.check("  ...a wrong password is refused with a clear message, and the admin stays logged in", await admin.waitForText("Wrong password.", 20000) && !!(await admin.eval(`!!document.querySelector("[data-admin-unlock]")`)));
+await admin.unlockAdminIfAsked();
+t.check("  ...the right password opens the panel", await admin.waitFor(`!!document.querySelector('nav[aria-label="Admin"]')`, 30000));
+t.check("  ...and then the admin tools answer", (await admin.apiStatus("/api/admin/alerts")) === 200);
+await admin.clickText("Lock admin panel");
+t.check("the 'Lock admin panel' button closes it again (the password is asked next time)", await admin.waitFor(`!!document.querySelector("[data-admin-unlock]")`, 20000) && (await admin.apiStatus("/api/admin/alerts")) === 423);
+admin.autoUnlock = true;
+await admin.unlockAdminIfAsked();
+await admin.goto(`/sites/${ids.demoSite}`); // (back to the client dashboard for the next check)
+
 // 1. Admin link and overview
 await admin.waitForText("Bounce rate", 40000);
 t.check("the client dashboard has no link to the admin panel (even for an admin)", !(await admin.text()).includes("Admin panel") && !(await admin.text()).includes("· Admin"));
@@ -28,6 +46,7 @@ await admin.fillLabel("Contact email", "boss@e2e-client.test");
 await admin.submit();
 t.check("creating a client opens its page", await admin.waitFor(`/^\\/admin\\/clients\\/[0-9a-f-]{36}$/.test(location.pathname)`), await admin.path());
 t.check("  ...showing the name and the 'no websites' state", await admin.waitFor(`document.body.innerText.includes("E2E Client") && document.body.innerText.includes("Add a website")`));
+t.check("  ...billed in US dollars by default", await admin.waitFor(`[...document.querySelectorAll("label")].find((l) => l.innerText.trim().startsWith("Billed in"))?.querySelector("select")?.value === "USD"`, 20000));
 const clientPath = (await admin.path()).split("?")[0];
 
 // 3. Add a website: a bad key is refused with the real reason, a good key works

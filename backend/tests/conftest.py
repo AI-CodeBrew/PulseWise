@@ -189,7 +189,8 @@ def make_user(db, email: str, *, admin: bool = False, active: bool = True, passw
 
 
 def make_client(db, name: str, status: str = "active") -> Client:
-    client = Client(name=name, status=status)
+    # (new clients are billed in US dollars; most billing tests were written with rupee amounts, so the test clients say so)
+    client = Client(name=name, status=status, currency="PKR")
     db.add(client)
     db.flush()
     return client
@@ -257,11 +258,16 @@ def api() -> Iterator:
     """
     with ExitStack() as stack:
 
-        def _make(email: str | None = None, password: str = PASSWORD) -> TestClient:
+        def _make(email: str | None = None, password: str = PASSWORD, *, unlock: bool = True) -> TestClient:
             client = stack.enter_context(TestClient(app))
             if email:
                 response = client.post("/api/auth/login", json={"email": email, "password": password})
                 assert response.status_code == 200, response.text
+                if unlock and response.json()["user"]["is_admin"]:
+                    # The admin panel asks for the password once more. Most tests are about what the panel DOES, so admins
+                    # come already unlocked here; the tests about the lock itself pass unlock=False.
+                    opened = client.post("/api/auth/admin-unlock", json={"password": password})
+                    assert opened.status_code == 200, opened.text
             return client
 
         yield _make

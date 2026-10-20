@@ -47,7 +47,7 @@ def url(path_template: str, website_id) -> str:
 
 def test_all_analytics_and_report_endpoints_are_website_scoped():
     assert len(POSTHOG_ROUTES) == 15, POSTHOG_ROUTES  # the 15 analytics endpoints
-    assert len(WEBSITE_ROUTES) == 22, WEBSITE_ROUTES  # + 3 weekly-report + 2 sales + 2 dashboard-tile GET endpoints
+    assert len(WEBSITE_ROUTES) == 24, WEBSITE_ROUTES  # + 3 weekly-report + 2 sales + 4 dashboard-tile GET endpoints
 
 
 def test_every_non_public_api_endpoint_requires_login(api, world):

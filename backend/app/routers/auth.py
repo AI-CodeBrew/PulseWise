@@ -20,10 +20,10 @@ from app.access import accessible_websites
 from app.audit import audit
 from app.billing.summary import support_info
 from app.config import settings
-from app.deps import SESSION_COOKIE, VIEW_AS_COOKIE, CurrentUser, DbSession, client_ip
+from app.deps import SESSION_COOKIE, VIEW_AS_COOKIE, CurrentUser, DbSession, admin_unlock_claims, clear_admin_cookie, client_ip, set_admin_cookie
 from app.emailer import send_email
 from app.models import Client, User
-from app.rate_limit import login_failures_by_account, login_failures_by_ip, reset_requests_by_ip
+from app.rate_limit import admin_unlock_failures, login_failures_by_account, login_failures_by_ip, reset_requests_by_ip
 from app.security import (
     RESET_TOKEN,
     RESET_TOKEN_MINUTES,
@@ -48,6 +48,10 @@ _PASSWORD = Field(min_length=1, max_length=1024)
 
 class LoginIn(BaseModel):
     email: str = _EMAIL
+    password: str = _PASSWORD
+
+
+class AdminUnlockIn(BaseModel):
     password: str = _PASSWORD
 
 
@@ -83,13 +87,15 @@ def _set_session_cookie(response: Response, user: User) -> None:
     )
 
 
-def _me(db: DbSession, user: User, view_as_client_id: uuid.UUID | None = None) -> dict:
+def _me(db: DbSession, user: User, view_as_client_id: uuid.UUID | None = None, admin_unlocked: bool = False) -> dict:
     view_as = None
     if view_as_client_id is not None:
         client = db.get(Client, view_as_client_id)
         view_as = {"client_id": str(view_as_client_id), "client_name": client.name if client else "?"}
     return {
         "user": {"id": str(user.id), "email": user.email, "name": user.name, "is_admin": user.is_admin},
+        # Admins only: have they confirmed their password for the admin panel (it locks itself after a while)?
+        "admin_unlocked": admin_unlocked and user.is_admin,
         "websites": accessible_websites(db, user, view_as_client_id),
         # Set while an admin is looking at the dashboard exactly as a client sees it (read-only).
         "view_as": view_as,
@@ -146,12 +152,50 @@ def login(body: LoginIn, request: Request, response: Response, db: DbSession):
 def logout(response: Response):
     for cookie in (SESSION_COOKIE, VIEW_AS_COOKIE):
         response.delete_cookie(cookie, path="/", secure=settings.cookie_secure, httponly=True, samesite="lax")
+    clear_admin_cookie(response)
     return {"ok": True}
 
 
 @router.get("/me", summary="The logged-in user and the websites they can see")
 def me(request: Request, user: CurrentUser, db: DbSession):
-    return _me(db, user, request.state.view_as_client_id)
+    return _me(db, user, request.state.view_as_client_id, admin_unlocked=admin_unlock_claims(request, user) is not None)
+
+
+@router.post("/admin-unlock", summary="Confirm your password to open the admin panel (admins)")
+def admin_unlock(body: AdminUnlockIn, request: Request, response: Response, user: CurrentUser, db: DbSession):
+    """Logging in is not enough for the admin panel: the admin types the password once more. It opens the panel for
+    ADMIN_UNLOCK_MINUTES (renewed while it is used). Wrong passwords are limited like at login and written to the audit log."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Only admins can do this.")
+    ip = client_ip(request)
+    key = str(user.id)  # (per admin account: whoever holds a stolen session still has to guess the password)
+    wait = admin_unlock_failures.retry_after(key)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many wrong passwords. Please try again in {_wait_message(wait)}.",
+            headers={"Retry-After": str(wait)},
+        )
+    if not verify_password(user.password_hash, body.password):
+        admin_unlock_failures.hit(key)
+        audit(db, "auth.admin_unlock_failed", actor_id=user.id, ip=ip)
+        db.commit()
+        # (403, not 401: a wrong password here must not log the admin out of the whole site)
+        raise HTTPException(status_code=403, detail="Wrong password.")
+    admin_unlock_failures.reset(key)
+    set_admin_cookie(response, user)
+    audit(db, "auth.admin_unlocked", actor_id=user.id, ip=ip)
+    db.commit()
+    return _me(db, user, None, admin_unlocked=True)
+
+
+@router.post("/admin-lock", summary="Close the admin panel again (the password is asked next time)")
+def admin_lock(request: Request, response: Response, user: CurrentUser, db: DbSession):
+    clear_admin_cookie(response)
+    if user.is_admin:
+        audit(db, "auth.admin_locked", actor_id=user.id, ip=client_ip(request))
+        db.commit()
+    return _me(db, user, request.state.view_as_client_id, admin_unlocked=False)
 
 
 @router.post("/view-as/end", summary="Stop viewing the dashboard as a client (admins)")
@@ -161,7 +205,7 @@ def end_view_as(request: Request, response: Response, user: CurrentUser, db: DbS
     if client_id is not None:
         audit(db, "admin.view_as_ended", actor_id=user.id, target_type="client", target_id=client_id, ip=client_ip(request))
         db.commit()
-    return _me(db, user, None)
+    return _me(db, user, None, admin_unlocked=admin_unlock_claims(request, user) is not None)
 
 
 @router.post("/forgot-password", summary="Email a password-reset link")

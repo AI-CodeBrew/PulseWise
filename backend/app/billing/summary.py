@@ -12,15 +12,16 @@ from app.billing.service import (
     active_subscription,
     balance,
     client_features,
+    invoice_price_for,
     is_overdue,
-    month_events,
-    next_billing_date,
+    month_usage,
+    next_invoice_start,
     paid_amount,
     price_for,
     today_utc,
 )
 from app.billing import providers
-from app.models import Client, ClientMember, Invoice, Website
+from app.models import Client, ClientMember, Invoice, Plan, UsageDaily, Website
 from app.settings_store import get_setting
 
 
@@ -63,9 +64,48 @@ def plan_dict(plan, currency: str = "PKR") -> dict[str, Any]:
         "id": str(plan.id), "name": plan.name, "slug": plan.slug, "description": plan.description,
         "price_pkr": num(plan.price_pkr), "price_usd": num(plan.price_usd),
         "price": num(plan.price_usd if currency == "USD" else plan.price_pkr),
-        "monthly_event_limit": plan.monthly_event_limit, "max_websites": plan.max_websites, "max_team_members": plan.max_team_members,
+        "intro_price_pkr": num(plan.intro_price_pkr), "intro_price_usd": num(plan.intro_price_usd),
+        "intro_price": num(plan.intro_price_usd if currency == "USD" else plan.intro_price_pkr), "intro_months": plan.intro_months,
+        "monthly_event_limit": plan.monthly_event_limit, "monthly_recording_limit": plan.monthly_recording_limit,
+        "max_websites": plan.max_websites, "max_team_members": plan.max_team_members,
         "features": {name: bool((plan.features or {}).get(name, False)) for name in FEATURES},
         "is_active": plan.is_active, "sort_order": plan.sort_order,
+    }
+
+
+def _client_description(plan: Plan) -> str | None:
+    """The description a client may read: the admin's own words, but never the note that marks an example plan."""
+    text = (plan.description or "").strip()
+    return None if not text or text.startswith("EXAMPLE plan") else text
+
+
+def client_plans(db: Session, client: Client) -> list[dict[str, Any]]:
+    """The plans this client can choose from: the ones that are for sale, in the client's currency.
+
+    Only what a client should see. Never the provider's price, our commission or the price guide.
+    """
+    plans = db.scalars(select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order, Plan.name))
+    usd = client.currency == "USD"
+    return [
+        {
+            "id": str(plan.id), "name": plan.name, "description": _client_description(plan),
+            "price": num(plan.price_usd if usd else plan.price_pkr),
+            "intro_price": num(plan.intro_price_usd if usd else plan.intro_price_pkr), "intro_months": plan.intro_months,
+            "monthly_event_limit": plan.monthly_event_limit, "monthly_recording_limit": plan.monthly_recording_limit,
+            "max_websites": plan.max_websites, "max_team_members": plan.max_team_members,
+            "features": {name: bool((plan.features or {}).get(name, False)) for name in FEATURES},
+        }
+        for plan in plans
+    ]
+
+
+def meter(used: int, limit: int | None) -> dict[str, Any]:
+    """One counter against its limit: total, used, what is left and by how much it is exceeded. A limit of None = unlimited."""
+    return {
+        "used": used, "limit": limit,
+        "remaining": None if not limit else max(limit - used, 0),
+        "over": 0 if not limit else max(used - limit, 0),
+        "percent": round(used / limit * 100, 1) if limit else None,
     }
 
 
@@ -77,22 +117,27 @@ def billing_summary(db: Session, client: Client) -> dict[str, Any]:
 
     websites = db.scalar(select(func.count()).select_from(Website).where(Website.client_id == client.id, Website.is_active.is_(True))) or 0
     members = db.scalar(select(func.count()).select_from(ClientMember).where(ClientMember.client_id == client.id)) or 0
-    events = month_events(db, client.id, today)
-    limit = plan.monthly_event_limit if plan else None
+    events, recordings = month_usage(db, client.id, today)
+    event_meter = meter(events, plan.monthly_event_limit if plan else None)
+    recording_meter = meter(recordings, plan.monthly_recording_limit if plan else None)
+    last_synced = db.scalar(select(func.max(UsageDaily.updated_at)).join(Website, Website.id == UsageDaily.website_id).where(Website.client_id == client.id))
 
     invoices = db.scalars(select(Invoice).where(Invoice.client_id == client.id).order_by(Invoice.issue_date.desc(), Invoice.number.desc())).all()
     open_invoices = [i for i in invoices if i.status == "open"]
 
     return {
         "client": {"id": str(client.id), "name": client.name, "currency": client.currency, "status": client.status, "suspended_reason": client.suspended_reason},
-        "plan": None if plan is None else {**plan_dict(plan, client.currency), "price": num(price_for(client, sub))},
-        "subscription": None if sub is None else {
-            "id": str(sub.id), "plan_id": str(sub.plan_id), "started_at": sub.started_at.isoformat(), "billing_day": sub.billing_day,
-            "price_override": num(sub.price_override), "next_invoice_date": next_billing_date(sub.billing_day, today).isoformat() if next_billing_date(sub.billing_day, today) > sub.started_at else sub.started_at.isoformat(),
-        },
+        # (a client with a special price pays that, so the plan's introductory price doesn't apply to them)
+        "plan": None if plan is None else {**plan_dict(plan, client.currency), "price": num(price_for(client, sub)),
+                                           **({"intro_price": None} if sub.price_override is not None else {})},
+        "subscription": None if sub is None else _subscription_dict(db, client, sub, today),
         "features": client_features(db, client.id),
         "usage": {
-            "events": events, "event_limit": limit, "percent": round(events / limit * 100, 1) if limit else None,
+            # events and recordings ("videos"): used, the plan's total, what is left, and how far over (all for THIS calendar month)
+            "events": events, "event_limit": event_meter["limit"], "event_remaining": event_meter["remaining"], "event_over": event_meter["over"], "percent": event_meter["percent"],
+            "recordings": recordings, "recording_limit": recording_meter["limit"], "recording_remaining": recording_meter["remaining"],
+            "recording_over": recording_meter["over"], "recording_percent": recording_meter["percent"],
+            "updated_at": last_synced.isoformat() if last_synced else None,
             "websites": websites, "max_websites": plan.max_websites if plan else None,
             "members": members, "max_members": plan.max_team_members if plan else None,
         },
@@ -105,6 +150,17 @@ def billing_summary(db: Session, client: Client) -> dict[str, Any]:
         "payment_instructions": get_setting(db, "billing.payment_instructions"),
         "online_payments": providers.online_provider(db) is not None,
         "support": support_info(db),
+    }
+
+
+def _subscription_dict(db: Session, client: Client, sub, today: date) -> dict[str, Any]:
+    start = next_invoice_start(db, sub, today)
+    amount, intro = invoice_price_for(client, sub, start)
+    return {
+        "id": str(sub.id), "plan_id": str(sub.plan_id), "started_at": sub.started_at.isoformat(), "billing_day": sub.billing_day,
+        "price_override": num(sub.price_override),
+        # when the next invoice is issued, what it will cost, and whether that is the introductory ("first month") price
+        "next_invoice_date": start.isoformat(), "next_invoice_amount": num(amount), "next_invoice_is_intro": intro,
     }
 
 

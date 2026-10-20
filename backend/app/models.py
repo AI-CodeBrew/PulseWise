@@ -93,7 +93,7 @@ class Client(Base):
     status: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
     # Why it is suspended: "manual" (an admin did it) or "overdue" (unpaid invoice; lifted automatically when paid).
     suspended_reason: Mapped[str | None] = mapped_column(String(32))
-    currency: Mapped[str] = mapped_column(String(3), default="PKR", server_default="PKR")  # what this client is billed in
+    currency: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")  # what this client is billed in (new clients: US dollars)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Karachi", server_default="Asia/Karachi")  # for "Monday morning" reports
     report_language: Mapped[str] = mapped_column(String(10), default="en", server_default="en")  # en | roman_ur | ur
     weekly_report_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
@@ -279,6 +279,11 @@ class Plan(Base):
     price_pkr: Mapped[Decimal] = mapped_column(Money, default=Decimal("0"), server_default="0")  # per month
     price_usd: Mapped[Decimal] = mapped_column(Money, default=Decimal("0"), server_default="0")  # per month
     monthly_event_limit: Mapped[int | None] = mapped_column(BigInteger)  # None = unlimited
+    monthly_recording_limit: Mapped[int | None] = mapped_column(BigInteger)  # None = unlimited; one recording ("video") = one recorded visit
+    # An introductory price for the first `intro_months` billed months (None = no intro price: the normal price applies from the start).
+    intro_price_pkr: Mapped[Decimal | None] = mapped_column(Money)
+    intro_price_usd: Mapped[Decimal | None] = mapped_column(Money)
+    intro_months: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     max_websites: Mapped[int | None] = mapped_column(Integer)  # None = unlimited
     max_team_members: Mapped[int | None] = mapped_column(Integer)  # None = unlimited
     # Which dashboard parts the plan includes, e.g. {"recordings": true, "weekly_reports": false}

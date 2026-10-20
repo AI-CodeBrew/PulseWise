@@ -14,12 +14,19 @@ def url(site, suffix=""):
 
 
 def answer_everything(fake):
-    fake.answer("tiles:events_agg", ["active_users_30d", "events_7d", "pageviews_7d", "visitors_7d"], [[605, 4665, 994, 541]])
-    fake.answer("tiles:sessions", ["sessions", "avg_duration", "bounce_rate", "pages_per_visit"], [[570, 92.67, 0.1719, 1.7439]])
+    # Each total comes with the same number for the period before ("prev_..."); "today" in the daily answers is 2026-10-19.
+    fake.answer("tiles:events_agg", ["active_users_30d", "prev_active_users_30d", "events_7d", "prev_events_7d", "pageviews_7d", "prev_pageviews_7d", "visitors_7d", "prev_visitors_7d"],
+                [[605, 500, 4665, 4000, 994, 1100, 541, 541]])
+    fake.answer("tiles:sessions", ["sessions", "avg_duration", "bounce_rate", "pages_per_visit", "prev_sessions", "prev_avg_duration", "prev_bounce_rate", "prev_pages_per_visit"],
+                [[570, 92.67, 0.1719, 1.7439, 400, 80.0, 0.25, 1.5]])
     fake.answer("tiles:top_page", ["path", "views"], [["/collections/kitchen", 267]])
     fake.answer("tiles:top_country", ["country", "visitors"], [["Pakistan", 502]])
-    fake.answer("tiles:mobile", ["mobile", "total"], [[514, 541]])
-    fake.answer("tiles:events", ["event", "last_7", "last_30"], [["whatsapp_click", 33, 120], ["cta_click", 10, 40]])
+    fake.answer("tiles:mobile", ["mobile", "total", "prev_mobile", "prev_total"], [[514, 541, 400, 500]])
+    fake.answer("tiles:events", ["event", "last_7", "last_30", "prev_7", "prev_30"], [["whatsapp_click", 33, 120, 30, 100], ["cta_click", 10, 40, 5, 0]])
+    fake.answer("tiles:events_daily", ["day", "today", "events", "pageviews", "active", "visitors", "mobile"],
+                [["2026-10-18", "2026-10-19", 100, 40, 12, 9, 8], ["2026-10-19", "2026-10-19", 150, 60, 15, 11, 5]])
+    fake.answer("tiles:sessions_daily", ["day", "today", "sessions", "avg_duration", "bounce_rate", "pages_per_visit"], [["2026-10-19", "2026-10-19", 30, 90.0, 0.2, 2.0]])
+    fake.answer("tiles:events_by_day", ["event", "day", "today", "times"], [["whatsapp_click", "2026-10-19", "2026-10-19", 5], ["whatsapp_click", "2026-10-17", "2026-10-19", 3]])
 
 
 # ------------------------------------------------------------------ first time: ask, don't show
@@ -52,16 +59,104 @@ def test_a_choice_is_saved_and_then_shown_with_numbers_in_the_chosen_order(api, 
         assert tile["description"] and tile["kind"] in {"number", "decimal", "percent", "duration", "text"}
 
 
+def test_every_tile_has_a_short_label_a_comparison_with_the_period_before_and_a_graph(api, world, fake_posthog):
+    answer_everything(fake_posthog)
+    alice = api("alice@a.test")
+    alice.put(url(world.site_a, "/prefs"), json={"tiles": [t.key for t in tiles.BUILTIN] + ["event:whatsapp_click:7", "event:cta_click:30"]})
+    by_key = {t["key"]: t for t in alice.get(url(world.site_a, "/tiles")).json()["tiles"]}
+
+    # the short name for the card (the full title, with the period, is for the chooser and the box)
+    assert by_key["active_users_30d"]["label"] == "Active users" and by_key["active_users_30d"]["title"] == "Active users (last 30 days)"
+    assert by_key["event:whatsapp_click:7"]["label"] == "whatsapp_click" and by_key["event:whatsapp_click:7"]["title"] == "whatsapp_click (last 7 days)"
+    assert {k: t["better"] for k, t in by_key.items() if t["better"] != "up"} == {"bounce_rate_7d": "down"}  # fewer people leaving is the good news
+
+    # the same number for the period just before it
+    assert {k: by_key[k]["previous"] for k in ("active_users_30d", "events_7d", "pageviews_7d", "visitors_7d", "sessions_7d")} == {
+        "active_users_30d": 500, "events_7d": 4000, "pageviews_7d": 1100, "visitors_7d": 541, "sessions_7d": 400}
+    assert (by_key["bounce_rate_7d"]["previous"], by_key["avg_visit_7d"]["previous"], by_key["pages_per_visit_7d"]["previous"], by_key["mobile_share_7d"]["previous"]) == (25.0, 80, 1.5, 80.0)
+    assert (by_key["event:whatsapp_click:7"]["previous"], by_key["event:cta_click:30"]["previous"]) == (30, 0)
+    assert by_key["top_page_7d"]["previous"] is None and by_key["top_country_7d"]["previous"] is None  # words have nothing to compare
+
+    # one number per day, oldest first, ending today (a day without rows is a real zero)
+    assert by_key["pageviews_7d"]["series"] == [0, 0, 0, 0, 0, 40, 60]
+    assert by_key["visitors_7d"]["series"] == [0, 0, 0, 0, 0, 9, 11] and by_key["events_7d"]["series"] == [0, 0, 0, 0, 0, 100, 150]
+    assert len(by_key["active_users_30d"]["series"]) == 30 and by_key["active_users_30d"]["series"][-2:] == [12, 15]  # (a 30 day tile gets 30 days)
+    assert by_key["sessions_7d"]["series"] == [0, 0, 0, 0, 0, 0, 30] and by_key["bounce_rate_7d"]["series"][-1] == 20.0
+    assert by_key["avg_visit_7d"]["series"][-1] == 90 and by_key["pages_per_visit_7d"]["series"][-1] == 2.0
+    assert by_key["mobile_share_7d"]["series"][-2:] == [88.9, 45.5]  # a share of that day's visitors
+    assert by_key["event:whatsapp_click:7"]["series"] == [0, 0, 0, 0, 3, 0, 5] and len(by_key["event:cta_click:30"]["series"]) == 30
+    assert by_key["top_page_7d"]["series"] is None and by_key["top_country_7d"]["series"] is None
+    assert not any(t["empty"] for t in by_key.values())
+
+
+def test_the_numbers_still_show_when_the_daily_numbers_for_the_graphs_cannot_be_read(api, world, fake_posthog):
+    from app.posthog_client import AnalyticsError
+
+    answer_everything(fake_posthog)
+    original = fake_posthog.request
+
+    async def graphs_down(ph, method, path, **kwargs):
+        if (kwargs.get("json") or {}).get("name", "").endswith(("_daily", "events_by_day")):
+            raise AnalyticsError(502, "slow", upstream_status=500, upstream_detail="timeout")
+        return await original(ph, method, path, **kwargs)
+
+    fake_posthog.request = graphs_down
+    alice = api("alice@a.test")
+    alice.put(url(world.site_a, "/prefs"), json={"tiles": ["pageviews_7d", "sessions_7d", "event:whatsapp_click:7"]})
+    response = alice.get(url(world.site_a, "/tiles"))
+    assert response.status_code == 200  # a missing graph is no reason to lose the page
+    by_key = {t["key"]: t for t in response.json()["tiles"]}
+    assert (by_key["pageviews_7d"]["value"], by_key["sessions_7d"]["value"], by_key["event:whatsapp_click:7"]["value"]) == (994, 570, 33)
+    assert by_key["pageviews_7d"]["previous"] == 1100  # (the comparison comes with the totals)
+    assert all(by_key[k]["series"] is None for k in by_key)
+
+    async def numbers_down(ph, method, path, **kwargs):
+        if (kwargs.get("json") or {}).get("name") == "tiles:events_agg":
+            raise AnalyticsError(502, "down", upstream_status=500, upstream_detail="boom")
+        return await original(ph, method, path, **kwargs)
+
+    from app.cache import cache
+
+    cache.clear()  # (the first answers were remembered for a few minutes)
+    fake_posthog.request = numbers_down
+    assert alice.get(url(world.site_a, "/tiles")).status_code == 502  # the numbers themselves are a real error
+
+
+def test_an_average_of_no_visits_is_marked_empty_and_has_nothing_to_compare(api, world, fake_posthog):
+    fake_posthog.answer("tiles:sessions", ["sessions", "avg_duration", "bounce_rate", "pages_per_visit", "prev_sessions", "prev_avg_duration", "prev_bounce_rate", "prev_pages_per_visit"],
+                        [[0, None, None, None, 0, None, None, None]])  # a quiet week, and a quiet week before it
+    fake_posthog.answer("tiles:mobile", ["mobile", "total", "prev_mobile", "prev_total"], [[0, 0, 0, 0]])
+    alice = api("alice@a.test")
+    alice.put(url(world.site_a, "/prefs"), json={"tiles": ["sessions_7d", "bounce_rate_7d", "avg_visit_7d", "pages_per_visit_7d", "mobile_share_7d", "top_page_7d", "top_country_7d"]})
+    by_key = {t["key"]: t for t in alice.get(url(world.site_a, "/tiles")).json()["tiles"]}
+    # no visits is a real zero for a COUNT, but "0% left after one page" would be a lie: those cards say "no visits" instead
+    assert by_key["sessions_7d"]["empty"] is False and by_key["sessions_7d"]["value"] == 0 and by_key["sessions_7d"]["previous"] == 0
+    for key in ("bounce_rate_7d", "avg_visit_7d", "pages_per_visit_7d", "mobile_share_7d", "top_page_7d", "top_country_7d"):
+        assert by_key[key]["empty"] is True, key
+    assert [by_key[k]["previous"] for k in ("bounce_rate_7d", "avg_visit_7d", "pages_per_visit_7d", "mobile_share_7d")] == [None, None, None, None]
+
+
+def test_a_week_with_visits_after_a_quiet_week_has_no_average_to_compare_with(api, world, fake_posthog):
+    answer_everything(fake_posthog)
+    fake_posthog.answer("tiles:sessions", ["sessions", "avg_duration", "bounce_rate", "pages_per_visit", "prev_sessions", "prev_avg_duration", "prev_bounce_rate", "prev_pages_per_visit"],
+                        [[570, 92.67, 0.1719, 1.7439, 0, None, None, None]])
+    alice = api("alice@a.test")
+    alice.put(url(world.site_a, "/prefs"), json={"tiles": ["sessions_7d", "bounce_rate_7d"]})
+    by_key = {t["key"]: t for t in alice.get(url(world.site_a, "/tiles")).json()["tiles"]}
+    assert by_key["sessions_7d"]["previous"] == 0 and by_key["bounce_rate_7d"]["previous"] is None and by_key["bounce_rate_7d"]["empty"] is False
+
+
 def test_only_the_queries_the_chosen_tiles_need_are_run(api, world, fake_posthog):
     answer_everything(fake_posthog)
     alice = api("alice@a.test")
     alice.put(url(world.site_a, "/prefs"), json={"tiles": DEFAULT})
     alice.get(url(world.site_a, "/tiles"))
-    assert sorted({c["query_name"] for c in fake_posthog.calls}) == ["tiles:events_agg", "tiles:sessions"]  # not top page, country, phone, events
+    # (each family is one query for the numbers and one for the little graphs) - not top page, country, phone or events
+    assert sorted({c["query_name"] for c in fake_posthog.calls}) == ["tiles:events_agg", "tiles:events_daily", "tiles:sessions", "tiles:sessions_daily"]
     fake_posthog.calls.clear()
     alice.put(url(world.site_a, "/prefs"), json={"tiles": ["event:whatsapp_click:7"]})
     alice.get(url(world.site_a, "/tiles"))
-    assert [c["query_name"] for c in fake_posthog.calls] == ["tiles:events"]
+    assert sorted(c["query_name"] for c in fake_posthog.calls) == ["tiles:events", "tiles:events_by_day"]
 
 
 def test_a_tracked_event_with_no_rows_counts_zero_and_nothing_chosen_is_allowed(api, world, fake_posthog):
@@ -172,8 +267,9 @@ def test_a_hostile_event_name_is_only_ever_passed_as_a_value_never_pasted_into_t
     evil = "x') OR 1=1 --"
     api("alice@a.test").put(url(world.site_a, "/prefs"), json={"tiles": [f"event:{evil}:7"]})
     api("alice@a.test").get(url(world.site_a, "/tiles"))
-    [(query, values)] = seen
-    assert evil not in query and "{names}" in query and values == {"names": [evil]}
+    assert len(seen) == 2  # the counts, and the days for the little graph
+    for query, values in seen:
+        assert evil not in query and "{names}" in query and values == {"names": [evil]}
 
 
 def test_a_saved_key_that_stopped_making_sense_is_skipped_not_fatal(api, db, world, fake_posthog):

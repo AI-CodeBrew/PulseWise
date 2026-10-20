@@ -4,34 +4,33 @@
 // Each person chooses their own tiles. The first time, we ask which ones they want; after that we only show those.
 // The choice is saved on the server per user and website (PUT /dashboard/prefs).
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { Sparkline } from "@/components/charts/Sparkline";
 import { Card } from "@/components/ui/Card";
 import { Button, Message, TextField, useAction } from "@/components/ui/Form";
 import { Async, Skeleton } from "@/components/ui/States";
 import { useApi } from "@/hooks/useApi";
 import { useSiteApi } from "@/hooks/useSite";
 import { apiPut } from "@/lib/api";
-import { formatDuration, formatNumber } from "@/lib/format";
-import type { MyTiles, TileCatalog, TileKind, TileValue } from "@/lib/types";
+import { formatNumber } from "@/lib/format";
+import { formatTileValue, tileChange } from "@/lib/tiles";
+import type { MyTiles, TileCatalog, TileValue } from "@/lib/types";
+import { TileDetailDialog } from "./TileDetailDialog";
 
 const DEFAULT_TILES = ["active_users_30d", "sessions_7d", "pageviews_7d"]; // ticked for you the first time
 const eventKey = (name: string, days: 7 | 30) => `event:${name}:${days}`;
-
-export function formatTileValue(kind: TileKind, value: number | string): string {
-  if (typeof value === "string") return value;
-  if (kind === "percent") return `${value}%`;
-  if (kind === "duration") return formatDuration(value);
-  if (kind === "decimal") return value.toLocaleString("en-US", { maximumFractionDigits: 1 });
-  return formatNumber(value);
-}
 
 export function MyDashboard() {
   const api = useSiteApi();
   const { me } = useAuth();
   const tiles = useApi<MyTiles>(api("/dashboard/tiles"));
   const [customizing, setCustomizing] = useState(false);
+  // The tile whose box is open. Each opening gets its own number: a browser reports a box's closing a moment LATER,
+  // and that late report must never close a box that was opened in the meantime.
+  const [opened, setOpened] = useState<{ tile: TileValue; id: number } | null>(null);
+  const openings = useRef(0);
   const readOnly = Boolean(me?.view_as); // an admin looking "as the client" can't change the client's choices
 
   const reload = () => {
@@ -50,9 +49,10 @@ export function MyDashboard() {
           const keys = data.tiles.map((t) => t.key);
           return (
             <>
-              <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                {!customizing && data.tiles.length > 0 && <p className="text-xs text-muted">Click a tile for the full story behind its number.</p>}
                 {!readOnly && !customizing && (
-                  <Button variant="secondary" onClick={() => setCustomizing(true)}>
+                  <Button variant="secondary" className="ml-auto" onClick={() => setCustomizing(true)}>
                     Customize
                   </Button>
                 )}
@@ -64,9 +64,9 @@ export function MyDashboard() {
                   No tiles yet. {!readOnly && "Press Customize to add some."}
                 </Card>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-4">
                   {data.tiles.map((tile) => (
-                    <Tile key={tile.key} tile={tile} readOnly={readOnly} onRemove={() => removeTile(keys, tile.key, reload)} />
+                    <Tile key={tile.key} tile={tile} readOnly={readOnly} onOpen={() => setOpened({ tile, id: ++openings.current })} onRemove={() => removeTile(keys, tile.key, reload)} />
                   ))}
                 </div>
               )}
@@ -74,6 +74,7 @@ export function MyDashboard() {
           );
         }}
       </Async>
+      {opened && <TileDetailDialog key={opened.id} tile={opened.tile} onClose={() => setOpened((now) => (now?.id === opened.id ? null : now))} />}
     </section>
   );
 
@@ -84,48 +85,141 @@ export function MyDashboard() {
 
 function TileSkeletons() {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {Array.from({ length: 3 }, (_, i) => (
-        <Skeleton key={i} className="h-40 rounded-lg" />
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-4">
+      {Array.from({ length: 4 }, (_, i) => (
+        <Skeleton key={i} className="h-36 rounded-xl" />
       ))}
     </div>
   );
 }
 
-/** One tile: title with an (i) for the explanation, a "…" menu, and the big number. */
-function Tile({ tile, readOnly, onRemove }: { tile: TileValue; readOnly: boolean; onRemove: () => void }) {
-  const text = formatTileValue(tile.kind, tile.value);
+/**
+ * One tile, built like a KPI card: its name (the (i) explains it), the period, a "..." menu, the big number, how it compares
+ * with the period before, and a little graph of the days. The whole card is a button that opens the box with the full story
+ * (the "..." menu and the (i) stay usable). Every part has a fixed place, so the numbers of one row line up.
+ */
+function Tile({ tile, readOnly, onOpen, onRemove }: { tile: TileValue; readOnly: boolean; onOpen: () => void; onRemove: () => void }) {
+  const isText = typeof tile.value === "string";
+  const text = tile.empty && !isText ? "—" : formatTileValue(tile.kind, tile.value);
+  const quiet = tile.empty || tile.value === 0; // nothing to see yet: a calm colour instead of a headline
+  const change = tileChange(tile);
+  const nothingHappened = tile.value === 0 && tile.previous === 0;
+  const tone = { good: "text-good", bad: "text-bad", flat: "text-muted" };
   return (
-    <div className="flex min-h-40 flex-col overflow-hidden rounded-lg border border-line bg-surface" data-tile={tile.key}>
-      <div className="flex items-start justify-between gap-2 border-b border-line px-3 py-3">
-        <div className="min-w-0 border-l-4 border-accent pl-3">
-          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-            <span className="min-w-0 break-words">{tile.title}</span>
-            <span title={tile.description} aria-label={tile.description} role="img" className="cursor-help text-xs font-normal text-muted">
-              ⓘ
-            </span>
-          </h3>
-          <p className="mt-1 text-xs text-ink-2">{tile.description}</p>
+    <div
+      className="group relative flex min-h-36 flex-col gap-3 rounded-xl border border-line bg-surface p-4 transition-shadow hover:border-accent/60 hover:shadow-md"
+      data-tile={tile.key}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open details: ${tile.title}`}
+        className="absolute inset-0 z-0 cursor-pointer rounded-xl focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+      />
+      <div className="pointer-events-none relative z-[1] flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-0.5">
+          <h3 className="truncate text-sm font-medium text-ink-2">{tile.label}</h3>
+          <InfoTip name={tile.label} text={tile.description} />
         </div>
-        {!readOnly && (
-          <details className="relative shrink-0">
-            <summary aria-label={`Options for ${tile.title}`} className="cursor-pointer list-none rounded-md px-2 py-0.5 text-lg leading-none text-ink-2 hover:bg-surface-2">
-              …
-            </summary>
-            <div className="absolute right-0 z-10 mt-1 w-48 rounded-lg border border-line bg-surface p-1 shadow-lg">
-              <button type="button" onClick={onRemove} className="block w-full rounded-md px-3 py-1.5 text-left text-sm text-ink hover:bg-surface-2">
-                Remove from dashboard
-              </button>
-            </div>
-          </details>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2">{tile.days} days</span>
+          {!readOnly && (
+            <details className="pointer-events-auto relative z-[2] opacity-60 transition-opacity group-hover:opacity-100 open:opacity-100 focus-within:opacity-100">
+              <summary aria-label={`Options for ${tile.title}`} className="cursor-pointer list-none rounded-md px-1.5 text-lg leading-6 text-ink-2 hover:bg-surface-2">
+                …
+              </summary>
+              <div className="absolute right-0 z-10 mt-1 w-48 rounded-lg border border-line bg-surface p-1 shadow-lg">
+                <button type="button" onClick={onRemove} className="block w-full rounded-md px-3 py-1.5 text-left text-sm text-ink hover:bg-surface-2">
+                  Remove from dashboard
+                </button>
+              </div>
+            </details>
+          )}
+        </div>
       </div>
-      <div className="grid flex-1 place-items-center px-3 py-5">
-        <p className={`text-center font-semibold tracking-tight text-ink ${typeof tile.value === "string" ? "break-all text-xl" : "text-5xl"}`} aria-label={`${tile.title}: ${text}`}>
-          {text}
-        </p>
+      <div className="pointer-events-none relative z-[1] mt-auto flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-h-10 items-center">
+            <p
+              className={`font-semibold tabular-nums tracking-tight ${quiet ? "text-muted" : "text-ink"} ${isText ? "line-clamp-2 break-all text-xl leading-7" : "text-4xl leading-10"}`}
+              aria-label={`${tile.title}: ${text}`}
+            >
+              {text}
+            </p>
+          </div>
+          <p className="mt-1 min-h-4 text-xs">
+            {tile.empty && !isText ? (
+              <span className="text-muted">No visits in the last {tile.days} days</span>
+            ) : nothingHappened ? (
+              <span className="text-muted">Nothing recorded in the last {tile.days} days</span>
+            ) : change ? (
+              <>
+                <span className={`font-medium ${tone[change.tone]}`}>
+                  <span aria-hidden="true">{change.arrow}</span> {change.text}
+                </span>{" "}
+                <span className="text-muted">{change.suffix}</span>
+                <span className="sr-only">. {change.spoken}</span>
+              </>
+            ) : null}
+          </p>
+        </div>
+        {tile.series && !tile.empty && <Sparkline values={tile.series} className="h-9 w-24 shrink-0" />}
       </div>
     </div>
+  );
+}
+
+/**
+ * The little (i) next to a tile's name: what the number means, in plain words.
+ * A mouse pointer shows it while it rests on the (i). A click (or a tap, phones have no hover) PINS it open: it then stays
+ * until the next click on the (i), a click anywhere else, or Esc. (Without the pin, a click on a hover-opened tip closed it.)
+ */
+function InfoTip({ name, text }: { name: string; text: string }) {
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const open = hovered || pinned;
+  const box = useRef<HTMLSpanElement>(null);
+  const id = useId();
+
+  useEffect(() => {
+    if (!pinned) return;
+    const away = (event: PointerEvent) => {
+      if (!box.current?.contains(event.target as Node)) setPinned(false);
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [pinned]);
+
+  return (
+    <span
+      ref={box}
+      className="pointer-events-auto relative shrink-0"
+      onPointerEnter={(event) => event.pointerType === "mouse" && setHovered(true)}
+      onPointerLeave={(event) => event.pointerType === "mouse" && setHovered(false)}
+    >
+      <button
+        type="button"
+        aria-label={`What is “${name}”?`}
+        aria-expanded={open}
+        aria-describedby={open ? id : undefined}
+        onClick={() => setPinned((now) => !now)}
+        onBlur={() => setPinned(false)} // (tabbing away closes it, too)
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setPinned(false);
+            setHovered(false);
+          }
+        }}
+        className="grid h-5 w-5 place-items-center rounded-full text-xs text-muted hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        ⓘ
+      </button>
+      {open && (
+        <span id={id} role="tooltip" className="absolute left-0 top-full z-30 mt-1 w-60 rounded-lg border border-line bg-surface p-2.5 text-xs leading-relaxed text-ink-2 shadow-lg">
+          {text}
+        </span>
+      )}
+    </span>
   );
 }
 

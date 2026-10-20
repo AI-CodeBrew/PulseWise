@@ -4,34 +4,55 @@
 #   1. creates a THROWAWAY SQLite database (e2e\.data\e2e.db), applies the migrations and seeds test users
 #   2. (re)builds the frontend, starts the backend and the frontend on it
 #   3. runs every file in e2e\tests\ in a headless browser
-#   4. stops the servers
+#   4. stops the servers IT started (and only those: your own dev servers are never touched)
 # Your real database (Supabase) is never touched. The tests read data from your real PostHog project.
+#
+# Ports: the tests use their OWN ports, 3100 (dashboard) and 8100 (API), so they never meet the servers you run yourself
+# on 3000 / 8000. To use other ports:   $env:E2E_FRONTEND_PORT = "3200"; $env:E2E_BACKEND_PORT = "8200"
 
 param([switch]$SkipBuild, [string]$Only = "")
 
 # Native programs (alembic, node...) write progress to stderr: that is not an error. We check exit codes instead.
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
-# The dashboard normally runs on port 3000. If something else already uses it, run the tests on another port:
-#   $env:E2E_FRONTEND_PORT = "3100"; powershell -File e2e\run.ps1
-$fePort = if ($env:E2E_FRONTEND_PORT) { $env:E2E_FRONTEND_PORT } else { "3000" }
-# Same for the API (normally 8000). Use this when your own backend is running there (e.g. `python run.py`):
-#   $env:E2E_BACKEND_PORT = "8100"; powershell -File e2e\run.ps1
-$bePort = if ($env:E2E_BACKEND_PORT) { $env:E2E_BACKEND_PORT } else { "8000" }
+$fePort = if ($env:E2E_FRONTEND_PORT) { $env:E2E_FRONTEND_PORT } else { "3100" }
+$bePort = if ($env:E2E_BACKEND_PORT) { $env:E2E_BACKEND_PORT } else { "8100" }
 $env:E2E_API_URL = "http://localhost:$bePort"           # where the browser tests find the API
-$env:FRONTEND_URL = "http://localhost:$fePort"        # the backend allows exactly this address (CORS, links in emails)
-$env:E2E_FRONTEND_URL = "http://localhost:$fePort"    # where the browser tests go
+$env:FRONTEND_URL = "http://localhost:$fePort"          # the backend allows exactly this address (CORS, links in emails)
+$env:E2E_FRONTEND_URL = "http://localhost:$fePort"      # where the browser tests go
 $data = Join-Path $PSScriptRoot ".data"
 $py = Join-Path $root "backend\.venv\Scripts\python.exe"
 New-Item -ItemType Directory -Force $data | Out-Null
 
+# The servers THIS script starts are written down (process id | what its command line must contain), and only those are
+# ever stopped. (An earlier version stopped everything that looked like a Next.js or uvicorn server, which also stopped a
+# developer's own `npm run dev`.) The command-line check protects against a recycled process id after a crashed run.
+$pidFile = Join-Path $data "pids.txt"
+
 function Stop-Servers {
-    Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'uvicorn app.main:app|next.*start|next-server' } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    if (-not (Test-Path $pidFile)) { return }
+    foreach ($line in Get-Content $pidFile) {
+        $id, $expected = $line -split '\|', 2
+        if ($id -notmatch '^\d+$') { continue }
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+        if ($process -and $process.CommandLine -match $expected) {
+            cmd /c "taskkill /PID $id /T /F >nul 2>&1"   # /T = the whole tree (npx starts node, which starts the server)
+        }
+    }
+    Remove-Item $pidFile -ErrorAction SilentlyContinue
 }
 
-Stop-Servers
-Start-Sleep -Seconds 1
+function Assert-PortFree($port, $what) {
+    $busy = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($busy) {
+        $who = (Get-CimInstance Win32_Process -Filter "ProcessId=$($busy.OwningProcess)" -ErrorAction SilentlyContinue).CommandLine
+        throw "Port $port ($what) is already in use by: $who`nStop that program, or run the tests on other ports: `$env:E2E_FRONTEND_PORT / `$env:E2E_BACKEND_PORT"
+    }
+}
+
+Stop-Servers   # leftovers of an earlier run of THIS script (a crash)
+Assert-PortFree $bePort "the API for the tests"
+Assert-PortFree $fePort "the dashboard for the tests"
 
 # 1. throwaway database
 $db = Join-Path $data "e2e.db"
@@ -60,10 +81,11 @@ if (-not $SkipBuild) {
 }
 $backendLog = Join-Path $data "backend.log"
 Remove-Item $backendLog, (Join-Path $data "backend.out.log") -ErrorAction SilentlyContinue
-Start-Process -FilePath $py -ArgumentList '-m', 'uvicorn', 'app.main:app', '--port', $bePort -WorkingDirectory (Join-Path $root "backend") `
-    -RedirectStandardOutput (Join-Path $data "backend.out.log") -RedirectStandardError $backendLog -WindowStyle Hidden
-Start-Process -FilePath "npx.cmd" -ArgumentList 'next', 'start', '-p', $fePort -WorkingDirectory (Join-Path $root "frontend") `
-    -RedirectStandardOutput (Join-Path $data "frontend.out.log") -RedirectStandardError (Join-Path $data "frontend.err.log") -WindowStyle Hidden
+$backend = Start-Process -FilePath $py -ArgumentList '-m', 'uvicorn', 'app.main:app', '--port', $bePort -WorkingDirectory (Join-Path $root "backend") `
+    -RedirectStandardOutput (Join-Path $data "backend.out.log") -RedirectStandardError $backendLog -WindowStyle Hidden -PassThru
+$frontend = Start-Process -FilePath "npx.cmd" -ArgumentList 'next', 'start', '-p', $fePort -WorkingDirectory (Join-Path $root "frontend") `
+    -RedirectStandardOutput (Join-Path $data "frontend.out.log") -RedirectStandardError (Join-Path $data "frontend.err.log") -WindowStyle Hidden -PassThru
+@("$($backend.Id)|uvicorn app.main:app", "$($frontend.Id)|next start") | Set-Content $pidFile
 $ready = $false
 for ($i = 0; $i -lt 40 -and -not $ready; $i++) {
     Start-Sleep -Milliseconds 500

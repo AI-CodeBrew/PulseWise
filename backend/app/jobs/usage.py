@@ -72,24 +72,27 @@ def upsert_usage(db: Session, website_id: uuid.UUID, rows: dict[date, dict[str, 
     dialect = db.get_bind().dialect.name
     insert = postgresql.insert if dialect == "postgresql" else sqlite.insert
     values = [{"website_id": website_id, "day": day, **numbers} for day, numbers in rows.items()]
+    counters = sorted({name for numbers in rows.values() for name in numbers})  # only the counters we actually have are overwritten
     statement = insert(UsageDaily).values(values)
     statement = statement.on_conflict_do_update(
         index_elements=["website_id", "day"],
-        set_={name: getattr(statement.excluded, name) for name in ("events", "pageviews", "recordings")}
-        | {"updated_at": datetime.now(timezone.utc)},
+        set_={name: getattr(statement.excluded, name) for name in counters} | {"updated_at": datetime.now(timezone.utc)},
     )
     db.execute(statement)
     db.commit()
 
 
-def _save(website_id: str, events: list[dict[str, Any]], recordings: list[dict[str, Any]]) -> int:
+def _save(website_id: str, events: list[dict[str, Any]], recordings: list[dict[str, Any]] | None) -> int:
+    """`recordings` is None when they could not be read this time: the recording counts saved earlier are then left alone
+    (writing zeros would tell a client they have all their recordings left)."""
+    fresh = {"events": 0, "pageviews": 0} | ({} if recordings is None else {"recordings": 0})
     by_day: dict[date, dict[str, int]] = {}
     for row in events:
-        by_day.setdefault(date.fromisoformat(str(row["day"])), {"events": 0, "pageviews": 0, "recordings": 0}).update(
+        by_day.setdefault(date.fromisoformat(str(row["day"])), dict(fresh)).update(
             events=int(row["events"] or 0), pageviews=int(row["pageviews"] or 0)
         )
-    for row in recordings:
-        by_day.setdefault(date.fromisoformat(str(row["day"])), {"events": 0, "pageviews": 0, "recordings": 0})["recordings"] = int(row["recordings"] or 0)
+    for row in recordings or []:
+        by_day.setdefault(date.fromisoformat(str(row["day"])), dict(fresh))["recordings"] = int(row["recordings"] or 0)
     with get_sessionmaker()() as db:
         upsert_usage(db, uuid.UUID(website_id), by_day)
     return len(by_day)
@@ -102,7 +105,7 @@ async def sync_website(config: WebsiteConfig, days_back: int) -> int:
         recordings = await ph.hogql(RECORDINGS_QUERY, {"days": days_back}, name="usage:recordings", ttl=0)
     except AnalyticsError as exc:  # most often: the key may not read recordings. Events still count.
         log.info("Recording counts unavailable for %s: %s", config.name, exc.upstream_detail or exc.message)
-        recordings = []
+        recordings = None
     return await asyncio.to_thread(_save, config.website_id, events, recordings)
 
 
