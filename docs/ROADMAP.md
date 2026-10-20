@@ -89,6 +89,7 @@ These run on APScheduler to start, and can move to Celery later.
   - Mark overdue invoices.
 - **Weekly.** Generate a report per website, later with an AI-written plain-language summary (possibly in Urdu or Roman Urdu). Email it to the client, and later send it on WhatsApp too.
 - **Cache.** PostHog query results are cached in Redis for 5–15 minutes. If Redis is not configured, the cache falls back to in-memory (the cache interface is built for this in Phase 2).
+- **Saved answers (built 2026-10-20, for speed).** Every PostHog answer a page needs is also saved in the database (table `analytics_cache`: one row per website + query + values, `refreshed_at`; key includes the PostHog host and project). A page reads memory, then the saved answer: younger than 5 minutes is used as is; older is shown **at once** while a fresh one is fetched in the background (once per question); older than 7 days is not shown. The job **"Keep dashboards fresh"** (every 20 minutes) asks what the Overview, Audience and Pages pages ask for 30 days, for every active website, so even the first visitor gets an instant page. Live events (short ttl) and `ttl=0` queries (usage, reports, connection checks) are never saved; raw events are never copied (too big). Switch: `SAVED_ANSWERS=false`. Tests keep it off except `tests/test_saved_answers.py`. Migration `0012` uses `IF NOT EXISTS`, so creating the table by hand in Supabase first is harmless.
 
 ## Database
 

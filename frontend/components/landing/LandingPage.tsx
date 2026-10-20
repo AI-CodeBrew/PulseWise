@@ -5,6 +5,7 @@ import { Icon, type IconName } from "@/components/layout/icons";
 import { BrandMark } from "@/components/ui/BrandMark";
 import { BRAND_NAME } from "@/lib/brand";
 import { HERO_BACKGROUND } from "./heroBackground";
+import { Pricing } from "./Pricing";
 
 /*
   The public front page (/) for visitors who are not logged in.
@@ -51,6 +52,7 @@ export function LandingPage() {
       <Hero />
       <Features />
       <HowItWorks />
+      <Pricing />
       <FinalCall />
       <Footer />
     </div>
@@ -71,6 +73,9 @@ function Header() {
           </a>
           <a href="#how" className="hidden text-sm font-medium text-ink-2 hover:text-ink sm:inline">
             How it works
+          </a>
+          <a href="#pricing" className="hidden text-sm font-medium text-ink-2 hover:text-ink sm:inline">
+            Pricing
           </a>
           <Link href="/login" className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-[#0a2b20] hover:bg-[#e9fbf2]">
             Log in

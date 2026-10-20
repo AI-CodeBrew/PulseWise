@@ -488,3 +488,19 @@ class DashboardPref(Base):
     website_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("websites.id", ondelete="CASCADE"), primary_key=True)
     tiles: Mapped[list[str]] = mapped_column(JsonType)  # tile keys in the order shown
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, server_default=func.now())
+
+
+class AnalyticsCache(Base):
+    """Saved answers of the analytics service, so dashboard pages open at once (see app/saved_answers.py).
+
+    One row per question: website + query + its values (`key` is a hash of those). Only numbers that are shown
+    anyway (counts, lists, charts), never an API key. A background job keeps the most-used pages fresh.
+    """
+
+    __tablename__ = "analytics_cache"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    website_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("websites.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100), default="", server_default="")  # which query (for debugging)
+    payload: Mapped[Any] = mapped_column(JsonType)  # the answer, as it was received
+    refreshed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=func.now())

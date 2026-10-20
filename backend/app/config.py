@@ -51,6 +51,7 @@ class Settings:
 
     # --- Background jobs ---
     scheduler_enabled: bool  # run the hourly/daily jobs inside this process
+    saved_answers: bool  # keep the analytics answers in the database so pages open at once (app/saved_answers.py)
 
     # --- Caching ---
     cache_ttl_seconds: int
@@ -91,6 +92,7 @@ def load_settings() -> Settings:
         whatsapp_access_token=os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip(),
         whatsapp_phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip(),
         scheduler_enabled=_bool("SCHEDULER_ENABLED", True),
+        saved_answers=_bool("SAVED_ANSWERS", True),
         cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", "300")),  # 5 minutes
         live_cache_ttl_seconds=int(os.getenv("LIVE_CACHE_TTL_SECONDS", "10")),
         smtp_host=os.getenv("SMTP_HOST", "").strip(),

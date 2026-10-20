@@ -34,6 +34,7 @@ PUBLIC_ENDPOINTS = {
     ("POST", "/api/auth/forgot-password"),
     ("POST", "/api/auth/reset-password"),
     ("POST", "/api/billing/webhooks/{provider}"),  # called by payment gateways, protected by their signature
+    ("GET", "/api/public/plans"),  # the prices on the landing page (tests/test_billing.py checks what it shows)
 }
 
 

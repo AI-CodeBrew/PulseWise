@@ -395,6 +395,20 @@ def test_changing_the_plan_changes_access_immediately(api, db, world):
     assert alice.get(f"/api/websites/{world.site_a.id}/recordings").status_code == 200
 
 
+def test_the_landing_page_shows_the_plans_for_sale_without_login(api, db, world):
+    make_plan(db, name="Growth", pkr="8000", usd="29", intro_usd="9")
+    make_plan(db, name="Old", active=False)  # no longer for sale: not shown
+    body = api().get("/api/public/plans").json()  # nobody logged in
+    assert body["currency"] == "USD" and [p["name"] for p in body["plans"]] == ["Growth"]
+    assert body["plans"][0]["price"] == 29 and body["plans"][0]["intro_price"] == 9
+    assert set(body["support"]) == {"whatsapp", "email"}
+    assert api().get("/api/public/plans?currency=PKR").json()["plans"][0]["price"] == 8000
+    assert api().get("/api/public/plans?currency=EUR").status_code == 422
+    # only what a client may see: no provider price, commission or other internal numbers
+    assert set(body["plans"][0]) == {"id", "name", "description", "price", "intro_price", "intro_months", "monthly_event_limit",
+                                     "monthly_recording_limit", "max_websites", "max_team_members", "features"}
+
+
 def test_website_and_member_limits_can_be_overridden_by_the_admin(api, db, world):
     one = make_plan(db, name="One", websites=1, members=2)
     subscribe(db, world.client_a, one)  # client A already has 1 website and 2 people (alice, vera)

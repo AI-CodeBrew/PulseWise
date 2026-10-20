@@ -24,6 +24,7 @@ os.environ["CORS_ORIGINS"] = "http://localhost:3000"
 os.environ["COOKIE_SECURE"] = "false"
 os.environ["SMTP_HOST"] = ""
 os.environ["SCHEDULER_ENABLED"] = "false"  # tests run jobs by hand
+os.environ["SAVED_ANSWERS"] = "false"  # answers only in memory (tests/test_saved_answers.py switches the database copy on)
 os.environ["ANTHROPIC_API_KEY"] = ""  # no AI in tests (tests that need it inject a fake client)
 
 from collections.abc import Iterator  # noqa: E402

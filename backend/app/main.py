@@ -19,7 +19,7 @@ from app.alerts import record_posthog_error
 from app.config import missing_settings, settings
 from app.emailer import email_configured
 from app.posthog_client import AnalyticsError
-from app.routers import admin, admin_billing, admin_ops, admin_shopify, analytics, auth, billing, client_settings, dashboard, reports, sales
+from app.routers import admin, admin_billing, admin_ops, admin_shopify, analytics, auth, billing, client_settings, dashboard, public, reports, sales
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -103,3 +103,4 @@ app.include_router(sales.router)
 app.include_router(dashboard.router)
 app.include_router(admin_shopify.router)
 app.include_router(analytics.router)
+app.include_router(public.router)

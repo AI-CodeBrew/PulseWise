@@ -3,7 +3,7 @@ The ONLY module that talks to PostHog.
 
 Everything else asks this module for data. That keeps three things in one place:
   1. URLs and auth headers  (per website, from WebsiteConfig)
-  2. Caching                (5 minutes by default; the key includes the website id)
+  2. Caching                (in memory for 5 minutes, and saved in the database: app/saved_answers.py)
   3. Error handling         (PostHog errors -> friendly, white-label messages)
 
 If we later read from our own Postgres copy of the events (PostHog batch exports)
@@ -17,10 +17,15 @@ from typing import Any
 
 import httpx
 
+from app import saved_answers
 from app.cache import cache, make_key
 from app.config import WebsiteConfig, settings
 
 log = logging.getLogger(__name__)
+
+# Questions being refreshed in the background right now, and their tasks (see PostHogClient._refresh_later).
+_refreshing: set[str] = set()
+_background_tasks: set[asyncio.Task] = set()
 
 # PostHog runs at most 3 queries at once per project. Extra queries would be queued
 # or rejected by PostHog, so we queue them ourselves: one semaphore per project.
@@ -69,10 +74,14 @@ class AnalyticsError(Exception):
 
 
 class PostHogClient:
-    """Reads data for ONE website. Create one per request with that website's config."""
+    """Reads data for ONE website. Create one per request with that website's config.
 
-    def __init__(self, website: WebsiteConfig):
+    refresh=True: always ask PostHog (and save the answer), never use a remembered one. Used by the refresh job.
+    """
+
+    def __init__(self, website: WebsiteConfig, *, refresh: bool = False):
         self.website = website
+        self.refresh = refresh
 
     async def hogql(
         self,
@@ -91,26 +100,19 @@ class PostHogClient:
         `name` labels the query in PostHog's query log, which helps with debugging.
         """
         values = values or {}
-        key = make_key(self.website.website_id, "hogql", query, values)
-        cached = cache.get(key)
-        if cached is not None:
-            return cached
-
         body = {
             "query": {"kind": "HogQLQuery", "query": query, "values": values},
             "name": name,
         }
-        data = await self._request(
-            "POST", f"/api/projects/{self.website.project_id}/query/", json=body
-        )
 
-        # PostHog returns {"columns": ["a", "b"], "results": [[1, 2], [3, 4]]}.
-        # Turn that into [{"a": 1, "b": 2}, {"a": 3, "b": 4}], which is easier to use.
-        columns = data.get("columns") or []
-        rows = [dict(zip(columns, row)) for row in data.get("results") or []]
+        async def fetch() -> list[dict[str, Any]]:
+            data = await self._request("POST", f"/api/projects/{self.website.project_id}/query/", json=body)
+            # PostHog returns {"columns": ["a", "b"], "results": [[1, 2], [3, 4]]}.
+            # Turn that into [{"a": 1, "b": 2}, {"a": 3, "b": 4}], which is easier to use.
+            columns = data.get("columns") or []
+            return [dict(zip(columns, row)) for row in data.get("results") or []]
 
-        cache.set(key, rows, ttl if ttl is not None else settings.cache_ttl_seconds)
-        return rows
+        return await self._answer(self._key("hogql", query, values), name, fetch, ttl)
 
     async def rest_get(
         self, path: str, params: dict[str, Any] | None = None, *, ttl: int | None = None, quiet_404: bool = False
@@ -120,16 +122,11 @@ class PostHogClient:
         `path` is relative to the project, e.g. "session_recordings/".
         """
         params = {k: v for k, v in (params or {}).items() if v is not None}
-        key = make_key(self.website.website_id, "rest", path, params)
-        cached = cache.get(key)
-        if cached is not None:
-            return cached
 
-        data = await self._request(
-            "GET", f"/api/projects/{self.website.project_id}/{path}", params=params, quiet_404=quiet_404
-        )
-        cache.set(key, data, ttl if ttl is not None else settings.cache_ttl_seconds)
-        return data
+        async def fetch() -> dict[str, Any]:
+            return await self._request("GET", f"/api/projects/{self.website.project_id}/{path}", params=params, quiet_404=quiet_404)
+
+        return await self._answer(self._key("rest", path, params), f"rest:{path}", fetch, ttl)
 
     async def rest_get_text(self, path: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False) -> str:
         """GET a REST endpoint that answers with plain text (e.g. JSON Lines), NOT cached.
@@ -140,6 +137,61 @@ class PostHogClient:
         return await self._request(
             "GET", f"/api/projects/{self.website.project_id}/{path}", params=params, raw=True, quiet_404=quiet_404
         )
+
+    # ------------------------------------------------------------------ remembered answers
+
+    def _key(self, *parts: Any) -> str:
+        # The website AND its analytics connection are part of the key: answers of an old project never show up for a new one.
+        return make_key(self.website.website_id, self.website.posthog_host, self.website.project_id, *parts)
+
+    async def _answer(self, key: str, name: str, fetch: Callable[[], Awaitable[Any]], ttl: int | None) -> Any:
+        """Memory first, then the answer saved in the database, then PostHog itself.
+
+        A saved answer is shown at once even when it is a few minutes old; a fresh one is then fetched in the
+        background for the next visitor. Live data (a short ttl) and ttl=0 are never saved. See app/saved_answers.py.
+        """
+        ttl = settings.cache_ttl_seconds if ttl is None else ttl
+        keep = settings.saved_answers and ttl >= settings.cache_ttl_seconds
+        if not self.refresh:
+            remembered = cache.get(key)
+            if remembered is not None:
+                return remembered
+            saved = await asyncio.to_thread(saved_answers.load, key) if keep else None
+            if saved is not None and saved[1] < saved_answers.MAX_AGE_SECONDS:
+                payload, age = saved
+                if age < saved_answers.FRESH_SECONDS:
+                    cache.set(key, payload, int(saved_answers.FRESH_SECONDS - age) + 1)
+                else:
+                    cache.set(key, payload, 30)  # (the background refresh replaces it as soon as it is back)
+                    self._refresh_later(key, name, fetch, ttl)
+                return payload
+        data = await fetch()
+        await self._remember(key, name, data, ttl, keep)
+        return data
+
+    async def _remember(self, key: str, name: str, data: Any, ttl: int, keep: bool) -> None:
+        if ttl > 0:
+            cache.set(key, data, ttl)
+        if keep:
+            await asyncio.to_thread(saved_answers.save, key, self.website.website_id, name, data)
+
+    def _refresh_later(self, key: str, name: str, fetch: Callable[[], Awaitable[Any]], ttl: int) -> None:
+        """Fetch a fresh answer in the background (once per question at a time)."""
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+        async def run() -> None:
+            try:
+                await self._remember(key, name, await fetch(), ttl, True)
+            except Exception:  # noqa: BLE001 - already reported (admin alert); the saved answer simply stays
+                log.info("Background refresh failed: website=%s query=%s", self.website.website_id, name)
+            finally:
+                _refreshing.discard(key)
+
+        task = asyncio.create_task(run())
+        _background_tasks.add(task)  # (asyncio only keeps weak references to running tasks)
+        task.add_done_callback(_background_tasks.discard)
 
     # ------------------------------------------------------------------ internals
 

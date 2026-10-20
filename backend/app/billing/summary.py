@@ -80,12 +80,17 @@ def _client_description(plan: Plan) -> str | None:
 
 
 def client_plans(db: Session, client: Client) -> list[dict[str, Any]]:
-    """The plans this client can choose from: the ones that are for sale, in the client's currency.
+    """The plans this client can choose from, in the client's currency."""
+    return plans_for_sale(db, client.currency)
 
-    Only what a client should see. Never the provider's price, our commission or the price guide.
+
+def plans_for_sale(db: Session, currency: str) -> list[dict[str, Any]]:
+    """The plans that are for sale, in one currency: for a client's Billing page and the public landing page.
+
+    Only what a client may see. Never the provider's price, our commission or the price guide.
     """
     plans = db.scalars(select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order, Plan.name))
-    usd = client.currency == "USD"
+    usd = currency == "USD"
     return [
         {
             "id": str(plan.id), "name": plan.name, "description": _client_description(plan),
