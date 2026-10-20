@@ -269,6 +269,7 @@ export interface AdminMember {
   name: string;
   role: "owner" | "viewer";
   is_active: boolean;
+  is_admin: boolean;
   last_login_at: string | null;
 }
 
@@ -341,8 +342,8 @@ export interface InviteResult {
   user_id: string;
   email: string;
   role: string;
-  new_user: boolean;
-  invite_link: string | null;
+  new_user: boolean; // false: they already had an account, and their own password stays
+  login_url: string;
 }
 
 

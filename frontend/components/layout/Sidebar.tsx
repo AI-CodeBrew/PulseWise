@@ -4,13 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { BrandMark } from "@/components/ui/BrandMark";
 import { useCurrentSite, useSiteHref, useSiteId } from "@/hooks/useSite";
 import { NAV_FEATURE } from "@/lib/features";
 import { BRAND_NAME } from "@/lib/brand";
 import { Icon, type IconName } from "./icons";
 
 // Paths are relative to the current website: "" = /sites/<id>, "/pages" = /sites/<id>/pages
-const NAV: { path: string; label: string; icon: IconName }[] = [
+// hideLock: no 🔒 next to this entry even when the plan doesn't include it (the page itself says so when opened).
+const NAV: { path: string; label: string; icon: IconName; hideLock?: boolean }[] = [
   { path: "", label: "Overview", icon: "overview" },
   { path: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { path: "/pages", label: "Pages", icon: "pages" },
@@ -20,7 +22,7 @@ const NAV: { path: string; label: string; icon: IconName }[] = [
   { path: "/people", label: "People", icon: "people" },
   { path: "/live", label: "Live events", icon: "live" },
   { path: "/recordings", label: "Recordings", icon: "recordings" },
-  { path: "/reports", label: "Weekly reports", icon: "reports" },
+  { path: "/reports", label: "Weekly reports", icon: "reports", hideLock: true },
 ];
 const OWNER_ONLY: (typeof NAV)[number][] = [
   { path: "/billing", label: "Billing", icon: "billing" },
@@ -43,9 +45,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav aria-label="Main" className="flex h-full flex-col">
       <div className="flex h-14 items-center gap-2 px-5">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">
-          {BRAND_NAME.charAt(0)}
-        </span>
+        <BrandMark />
         <span className="font-semibold text-ink">{BRAND_NAME}</span>
       </div>
 
@@ -68,7 +68,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               >
                 <Icon name={item.icon} />
                 {item.label}
-                {locked && (
+                {locked && !item.hideLock && (
                   <span className="ml-auto text-xs" title="Not in your plan">
                     <span aria-hidden="true">🔒</span>
                     <span className="sr-only"> (not in your plan)</span>

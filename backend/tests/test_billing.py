@@ -404,7 +404,7 @@ def test_website_and_member_limits_can_be_overridden_by_the_admin(api, db, world
     assert refused.status_code == 409 and "allows 1 website" in refused.json()["detail"]
     assert admin.post(f"/api/admin/clients/{world.client_a.id}/websites", json={**body, "ignore_plan_limit": True}).status_code == 201
 
-    person = {"email": "third@a.test", "role": "viewer"}
+    person = {"email": "third@a.test", "role": "viewer", "password": "A-Valid-Password-1"}  # (a new person always needs one)
     assert admin.post(f"/api/admin/clients/{world.client_a.id}/members", json=person).status_code == 409
     assert db.scalar(select(Client.id).where(Client.id == world.client_a.id)) is not None
     from app.models import User

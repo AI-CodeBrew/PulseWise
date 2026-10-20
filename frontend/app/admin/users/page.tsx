@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { EditLoginPanel } from "@/components/admin/EditLoginPanel";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { Card } from "@/components/ui/Card";
 import { DataTable } from "@/components/ui/DataTable";
@@ -19,6 +20,7 @@ export default function UsersPage() {
   const [search, setSearch] = useState("");
   const users = useApi<ListResponse<AdminUser>>("/api/admin/users", { q: search.trim() || undefined });
   const [link, setLink] = useState<{ email: string; url: string } | null>(null);
+  const [loginFor, setLoginFor] = useState<{ id: string; email: string } | null>(null);
 
   const action = useAction(async (run: () => Promise<unknown>) => {
     await run();
@@ -48,6 +50,11 @@ export default function UsersPage() {
         <div className="mb-4 space-y-2">
           <Message kind="success">New invitation link for {link.email} (works once, for 7 days):</Message>
           <CodeBlock code={link.url} label="Invitation link" />
+        </div>
+      )}
+      {loginFor && (
+        <div className="mb-4">
+          <EditLoginPanel key={loginFor.id} userId={loginFor.id} email={loginFor.email} onClose={() => setLoginFor(null)} onSaved={users.reload} />
         </div>
       )}
       <Card className="pt-1">
@@ -95,20 +102,33 @@ export default function UsersPage() {
                     header: "",
                     align: "right",
                     cell: (r) => (
-                      <div className="flex justify-end gap-2">
+                      <div className="flex flex-wrap justify-end gap-2">
                         {!r.is_admin && (
-                          <Button
-                            variant="ghost"
-                            className="!px-2 !py-1 text-xs"
-                            onClick={() =>
-                              action.run(async () => {
-                                const result = await apiPost<{ email: string; invite_link: string }>(`/api/admin/users/${r.id}/invite-link`);
-                                setLink({ email: result.email, url: result.invite_link });
-                              })
-                            }
-                          >
-                            Invite link
-                          </Button>
+                          <>
+                            <Button
+                              variant="ghost"
+                              className="!px-2 !py-1 text-xs"
+                              onClick={() => {
+                                setLink(null);
+                                setLoginFor({ id: r.id, email: r.email });
+                              }}
+                            >
+                              Edit login
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              className="!px-2 !py-1 text-xs"
+                              onClick={() =>
+                                action.run(async () => {
+                                  const result = await apiPost<{ email: string; invite_link: string }>(`/api/admin/users/${r.id}/invite-link`);
+                                  setLoginFor(null);
+                                  setLink({ email: result.email, url: result.invite_link });
+                                })
+                              }
+                            >
+                              Invite link
+                            </Button>
+                          </>
                         )}
                         {r.id !== me?.user.id && (
                           <Button

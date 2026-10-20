@@ -1,5 +1,7 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
 
+import { BrandMark } from "@/components/ui/BrandMark";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { BRAND_NAME } from "@/lib/brand";
 
 /** Centered card with the brand on top: used by login, password and account pages. */
@@ -8,9 +10,7 @@ export function AuthCard({ title, subtitle, children }: { title: string; subtitl
     <main className="grid min-h-screen place-items-center px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center justify-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-sm font-bold text-white">
-            {BRAND_NAME.charAt(0)}
-          </span>
+          <BrandMark size={32} />
           <span className="text-lg font-semibold text-ink">{BRAND_NAME}</span>
         </div>
         <div className="rounded-xl border border-line bg-surface p-6">
@@ -23,15 +23,20 @@ export function AuthCard({ title, subtitle, children }: { title: string; subtitl
   );
 }
 
-/** A labelled text input. */
+const fieldClass =
+  "w-full rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft";
+
+/** A labelled text input. A box with type="password" gets the eye button that shows/hides what is typed. */
 export function Field({ label, ...input }: { label: string } & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="mb-4 block">
       <span className="mb-1 block text-sm font-medium text-ink">{label}</span>
-      <input
-        {...input}
-        className="w-full rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft"
-      />
+      {input.type === "password" ? (
+        // aria-label: the eye button lives inside this <label>, so name the box explicitly (else it would read "Password Show password")
+        <PasswordInput {...input} aria-label={label} className={fieldClass} />
+      ) : (
+        <input {...input} className={fieldClass} />
+      )}
     </label>
   );
 }

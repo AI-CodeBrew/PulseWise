@@ -1,4 +1,4 @@
-// Small line icons for the sidebar (24x24, drawn with strokes, color = current text color).
+// Small line icons for the sidebar and the form buttons (24x24, drawn with strokes, color = current text color).
 
 const PATHS: Record<string, string[]> = {
   overview: ["M4 4h6v6H4z", "M14 4h6v6h-6z", "M4 14h6v6H4z", "M14 14h6v6h-6z"],
@@ -16,6 +16,8 @@ const PATHS: Record<string, string[]> = {
   help: ["M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18", "M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7", "M12 17h.01"],
   menu: ["M4 6h16", "M4 12h16", "M4 18h16"],
   close: ["M6 6l12 12", "M18 6L6 18"],
+  eye: ["M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z", "M12 9.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5"],
+  eyeOff: ["M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z", "M12 9.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5", "M4 4l16 16"],
 };
 
 export type IconName = keyof typeof PATHS;

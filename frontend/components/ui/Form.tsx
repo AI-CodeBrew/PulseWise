@@ -4,20 +4,32 @@
 
 import { useCallback, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { ApiError } from "@/lib/api";
 
 const inputClass =
   "w-full rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-accent focus:ring-2 focus:ring-accent-soft disabled:opacity-60";
 
+/**
+ * A labelled text box. A box with type="password" (passwords, API keys) gets the eye button that shows/hides it;
+ * `shown` / `onShownChange` are only for a page that wants to know or set that (see "Add user").
+ */
 export function TextField({
   label,
   hint,
+  shown,
+  onShownChange,
   ...input
-}: { label: string; hint?: string } & InputHTMLAttributes<HTMLInputElement>) {
+}: { label: string; hint?: string; shown?: boolean; onShownChange?: (shown: boolean) => void } & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-ink">{label}</span>
-      <input {...input} className={inputClass} />
+      {input.type === "password" ? (
+        // aria-label: the eye button lives inside this <label>, so name the box explicitly (else it would read "Password Show password")
+        <PasswordInput {...input} aria-label={label} shown={shown} onShownChange={onShownChange} className={inputClass} />
+      ) : (
+        <input {...input} className={inputClass} />
+      )}
       {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
   );

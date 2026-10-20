@@ -21,9 +21,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen lg:pl-60">
+      {/* thin green + red line across the very top, over the menu and the top bar */}
+      <div aria-hidden="true" className="chrome-stripe fixed inset-x-0 top-0 z-40 h-[3px]" />
       <ViewAsBanner />
-      {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 hidden w-60 border-r border-line bg-surface lg:block">
+      {/* Desktop sidebar ("chrome" = the little dark frame, see globals.css) */}
+      <aside className="chrome fixed inset-y-0 left-0 hidden w-60 bg-surface lg:block">
         <Sidebar />
       </aside>
 
@@ -36,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             aria-label="Close menu"
             onClick={() => setMenuOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 w-64 max-w-[80%] border-r border-line bg-surface shadow-xl">
+          <aside className="chrome absolute inset-y-0 left-0 w-64 max-w-[80%] bg-surface shadow-xl">
             <button
               type="button"
               onClick={() => setMenuOpen(false)}
@@ -50,25 +52,24 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {/* Top bar */}
-      <header className="sticky top-0 z-30 border-b border-line bg-page/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 lg:px-8">
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            className="-ml-1 shrink-0 rounded-md p-1 text-ink-2 hover:bg-surface-2 lg:hidden"
-            aria-label="Open menu"
-          >
-            <Icon name="menu" />
-          </button>
-          <div className="flex min-w-0 flex-1">
+      {/* Top bar: same dark as the sidebar and no line between them, so the logo and the website name share one corner */}
+      <header className="chrome sticky top-0 z-30 bg-surface">
+        {/* Three columns, the outer two equally wide, so the website name sits in the middle */}
+        <div className="grid h-14 grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-3 px-4 lg:px-6">
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              className="-ml-1 shrink-0 rounded-md p-1 text-ink-2 hover:bg-surface-2 lg:hidden"
+              aria-label="Open menu"
+            >
+              <Icon name="menu" />
+            </button>
+          </div>
+          <div className="flex min-w-0 justify-center">
             <WebsiteSwitcher />
           </div>
-          {hasDateRange && (
-            <div className="shrink-0">
-              <DateRangeSelector />
-            </div>
-          )}
+          <div className="flex justify-end">{hasDateRange && <DateRangeSelector />}</div>
         </div>
       </header>
 

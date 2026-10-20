@@ -89,6 +89,10 @@ class MemberIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     name: str = Field(default="", max_length=200)
     role: Role = "viewer"
+    # Required for a NEW person: it makes their login right now, and the admin hands the details over (nothing is emailed).
+    # It is NEVER applied to an existing account (otherwise adding somebody to a second client would change the password
+    # of their first login), so for somebody who already has an account it is ignored.
+    password: str | None = Field(default=None, max_length=1024)
     ignore_plan_limit: bool = False  # add them even though the client's plan allows fewer people
 
 
@@ -99,6 +103,13 @@ class MemberPatch(BaseModel):
 class UserPatch(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     is_active: bool | None = None
+
+
+class LoginPatch(BaseModel):
+    """What the admin may change about a person's login. A field that is left out (or empty) stays as it is."""
+
+    email: str | None = Field(default=None, max_length=320)
+    password: str | None = Field(default=None, max_length=1024)  # the rules (length...) are checked by password_problem()
 
 
 class ViewAsIn(BaseModel):
@@ -197,6 +208,7 @@ def member_dict(member: ClientMember) -> dict[str, Any]:
         "role": member.role,
         "suspended": member.suspended,
         "is_active": user.is_active,
+        "is_admin": user.is_admin,  # (the admin panel offers "Set password" only for non-admins)
         "last_login_at": _iso(user.last_login_at),
     }
 
@@ -483,13 +495,21 @@ async def get_snippet(website_id: uuid.UUID, db: DbSession):
 
 
 @router.post("/clients/{client_id}/members", status_code=201, summary="Give a person access to a client")
-def add_member(client_id: uuid.UUID, body: MemberIn, request: Request, background: BackgroundTasks, admin: AdminUser, db: DbSession):
+def add_member(client_id: uuid.UUID, body: MemberIn, request: Request, admin: AdminUser, db: DbSession):
     client = _get_client(db, client_id)
+    password = body.password or None
+    if password is not None:
+        problem = password_problem(password)
+        if problem:
+            raise _bad_request(problem)
     try:
         user = accounts.find_user(db, body.email)
         created = user is None
         if created:
+            if password is None:
+                raise _bad_request("A new person needs a password: type one (or press Generate), then send them the login details.")
             user = accounts.create_user(db, body.email, body.name)
+            user.password_hash = hash_password(password)
     except accounts.AccountError as exc:
         raise _bad_request(str(exc)) from None
     if db.get(ClientMember, (client.id, user.id)):
@@ -502,16 +522,10 @@ def add_member(client_id: uuid.UUID, body: MemberIn, request: Request, backgroun
             raise HTTPException(status_code=409, detail=f"{exc} Upgrade their plan, or add them anyway.") from None
     db.add(ClientMember(client_id=client.id, user_id=user.id, role=body.role))
     audit(db, "admin.member_added", actor_id=admin.id, target_type="user", target_id=user.id, ip=client_ip(request),
-          details={"client_id": str(client.id), "role": body.role, "new_user": created})
+          details={"client_id": str(client.id), "role": body.role, "new_user": created})  # (never the password)
     db.commit()
-
-    # A NEW person gets an invitation link to choose their password. The link is shown to the admin
-    # (to send over WhatsApp, say) and emailed when email is configured.
-    link = None
-    if created:
-        link = accounts.invite_link(user)
-        background.add_task(accounts.send_invite_email, user, link, client.name)
-    return {"user_id": str(user.id), "email": user.email, "role": body.role, "new_user": created, "invite_link": link}
+    # Nothing is emailed: the admin hands the login details to the person (the page shows a message to copy).
+    return {"user_id": str(user.id), "email": user.email, "role": body.role, "new_user": created, "login_url": f"{settings.frontend_url}/login"}
 
 
 @router.patch("/clients/{client_id}/members/{user_id}", summary="Change a member's role")
@@ -608,6 +622,56 @@ def new_invite_link(user_id: uuid.UUID, request: Request, admin: AdminUser, db: 
     audit(db, "admin.invite_link_created", actor_id=admin.id, target_type="user", target_id=user.id, ip=client_ip(request))
     db.commit()
     return {"email": user.email, "invite_link": accounts.invite_link(user)}
+
+
+@router.patch("/users/{user_id}/login", summary="Change a user's login: a new email and/or a new password (no old password needed)")
+def edit_user_login(user_id: uuid.UUID, body: LoginPatch, request: Request, admin: AdminUser, db: DbSession):
+    """For a person who forgot their password, lost their mailbox or is locked out. The admin chooses the new values and
+    hands them over themselves (nothing is emailed). Everything is checked first: nothing changes unless all of it is valid."""
+    user = _get_user(db, user_id)
+    if user.is_admin:
+        # Otherwise any admin could take over another admin's login (a new email + "forgot password" would do it).
+        # Admins change their own password on their Account page.
+        raise _bad_request("This is an admin login. Admins change their own password on their Account page.")
+
+    new_email = None
+    if body.email and body.email.strip():
+        try:
+            new_email = accounts.normalize_email(body.email)
+        except accounts.AccountError as exc:
+            raise _bad_request(str(exc)) from None
+        if new_email == user.email:
+            new_email = None  # the same address again: nothing to change
+        elif accounts.find_user(db, new_email):
+            raise HTTPException(status_code=409, detail=f"{new_email} already belongs to another login.")
+    new_password = body.password or None
+    if new_password is not None:
+        problem = password_problem(new_password)
+        if problem:
+            raise _bad_request(problem)
+    if new_email is None and new_password is None:
+        raise _bad_request("Nothing to change: type a different email and/or a new password.")
+
+    old_email = user.email
+    # Where the client's INVOICES go is a separate address (clients.contact_email). It is not changed behind the admin's
+    # back, but the admin is told which clients still have the old one.
+    still_old = db.scalars(select(Client).where(func.lower(Client.contact_email) == old_email)).all() if new_email else []
+    if new_email is not None:
+        user.email = new_email
+        audit(db, "admin.user_email_changed", actor_id=admin.id, target_type="user", target_id=user.id, ip=client_ip(request),
+              details={"from": old_email, "to": new_email})
+    if new_password is not None:
+        user.password_hash = hash_password(new_password)
+        audit(db, "admin.user_password_set", actor_id=admin.id, target_type="user", target_id=user.id, ip=client_ip(request))  # (never the password)
+    user.token_version += 1  # logs them out everywhere, and every invitation / reset link sent before stops working
+    db.commit()
+    return {
+        "email": user.email,
+        "email_changed": new_email is not None,
+        "password_set": new_password is not None,
+        "login_url": f"{settings.frontend_url}/login",
+        "billing_contact_of": [{"id": str(c.id), "name": c.name} for c in still_old],
+    }
 
 
 @router.get("/users", summary="All users")

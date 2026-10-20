@@ -7,13 +7,8 @@ import { Button, CodeBlock, Message, SelectField, TextField, useAction } from "@
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { apiPost } from "@/lib/api";
+import { randomPassword } from "@/lib/password";
 import type { OnboardResult } from "@/lib/types";
-
-function randomPassword(): string {
-  const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const bytes = crypto.getRandomValues(new Uint8Array(14));
-  return Array.from(bytes, (b) => chars[b % chars.length]).join("");
-}
 
 export default function NewUserPage() {
   const [email, setEmail] = useState("");
@@ -107,7 +102,9 @@ export default function NewUserPage() {
               <TextField
                 label="Password"
                 required
-                type={showPassword ? "text" : "password"}
+                type="password"
+                shown={showPassword}
+                onShownChange={setShowPassword}
                 autoComplete="new-password"
                 minLength={8}
                 value={password}
@@ -115,6 +112,7 @@ export default function NewUserPage() {
                 hint="At least 8 characters. They can change it later from their Account page."
               />
               <div className="mt-2 flex gap-3">
+                {/* A generated password is shown at once, so the admin can read it and hand it over. */}
                 <Button
                   variant="ghost"
                   className="!px-2 !py-1 text-xs"
@@ -124,9 +122,6 @@ export default function NewUserPage() {
                   }}
                 >
                   Generate
-                </Button>
-                <Button variant="ghost" className="!px-2 !py-1 text-xs" onClick={() => setShowPassword((s) => !s)}>
-                  {showPassword ? "Hide" : "Show"}
                 </Button>
               </div>
             </div>

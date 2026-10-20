@@ -10,10 +10,12 @@ import { DataTable } from "@/components/ui/DataTable";
 import { Badge, Button, CodeBlock, DangerZone, Message, SelectField, TextArea, TextField, useAction } from "@/components/ui/Form";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PlanBillingCard } from "@/components/admin/PlanBillingCard";
+import { EditLoginPanel } from "@/components/admin/EditLoginPanel";
 import { Async, EmptyState, Skeleton } from "@/components/ui/States";
 import { useApi } from "@/hooks/useApi";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { randomPassword } from "@/lib/password";
 import type { AdminClientDetail, AdminMember, AdminWebsite, InviteResult, Me } from "@/lib/types";
 
 export default function ClientDetailPage() {
@@ -281,7 +283,8 @@ function AddWebsiteForm({ clientId, onDone, onCancel }: { clientId: string; onDo
 
 function MembersCard({ client, reload }: { client: AdminClientDetail; reload: () => void }) {
   const [inviting, setInviting] = useState(client.members.length === 0);
-  const [lastInvite, setLastInvite] = useState<{ email: string; link: string } | null>(null);
+  const [added, setAdded] = useState<{ result: InviteResult; password: string } | null>(null); // what to hand over after "Add a person"
+  const [loginFor, setLoginFor] = useState<AdminMember | null>(null);
 
   return (
     <Card>
@@ -296,27 +299,31 @@ function MembersCard({ client, reload }: { client: AdminClientDetail; reload: ()
           )
         }
       />
-      {lastInvite && (
+      {added && <AddedBanner result={added.result} password={added.password} />}
+      {loginFor && (
         <div className="px-4 pb-4 sm:px-5">
-          <Message kind="success">
-            {lastInvite.email} was added. Send them this link so they can choose a password (it works once, for 7 days):
-          </Message>
-          <div className="mt-3">
-            <CodeBlock code={lastInvite.link} label={`Invitation link for ${lastInvite.email}`} />
-          </div>
+          <EditLoginPanel key={loginFor.user_id} userId={loginFor.user_id} email={loginFor.email} onClose={() => setLoginFor(null)} onSaved={reload} />
         </div>
       )}
       {client.members.length === 0 && !inviting ? (
         <EmptyState message="Nobody has access yet." />
       ) : (
-        client.members.length > 0 && <MembersTable client={client} reload={reload} onLink={(email, link) => setLastInvite({ email, link })} />
+        client.members.length > 0 && (
+          <MembersTable
+            client={client}
+            reload={reload}
+            onEditLogin={(member) => {
+              setAdded(null);
+              setLoginFor(member);
+            }}
+          />
+        )
       )}
       {inviting && (
         <InviteForm
           clientId={client.id}
-          onAdded={(result) => {
-            if (result.invite_link) setLastInvite({ email: result.email, link: result.invite_link });
-            else setLastInvite(null);
+          onAdded={(result, password) => {
+            setAdded({ result, password });
             setInviting(false);
             reload();
           }}
@@ -327,7 +334,29 @@ function MembersCard({ client, reload }: { client: AdminClientDetail; reload: ()
   );
 }
 
-function MembersTable({ client, reload, onLink }: { client: AdminClientDetail; reload: () => void; onLink: (email: string, link: string) => void }) {
+/** After "Add a person": the login details to hand over, or (for somebody who already had an account) a note that the typed password was not used. */
+function AddedBanner({ result, password }: { result: InviteResult; password: string }) {
+  if (!result.new_user) {
+    return (
+      <div className="px-4 pb-4 sm:px-5">
+        <Message kind="info">
+          {result.email} already had an account, so they now have access with their own password (the one you typed was not used). To change it, use &quot;Edit login&quot;.
+        </Message>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3 px-4 pb-4 sm:px-5">
+      <Message kind="success">{result.email} was added. Send them these login details:</Message>
+      <CodeBlock
+        label={`Login details for ${result.email}`}
+        code={`Your login details.\nLogin: ${result.login_url}\nEmail: ${result.email}\nPassword: ${password}`}
+      />
+    </div>
+  );
+}
+
+function MembersTable({ client, reload, onEditLogin }: { client: AdminClientDetail; reload: () => void; onEditLogin: (member: AdminMember) => void }) {
   const action = useAction(async (run: () => Promise<unknown>) => {
     await run();
     reload();
@@ -373,19 +402,12 @@ function MembersTable({ client, reload, onLink }: { client: AdminClientDetail; r
             header: "",
             align: "right",
             cell: (m) => (
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="ghost"
-                  className="!px-2 !py-1 text-xs"
-                  onClick={() =>
-                    action.run(async () => {
-                      const result = await apiPost<{ email: string; invite_link: string }>(`/api/admin/users/${m.user_id}/invite-link`);
-                      onLink(result.email, result.invite_link);
-                    })
-                  }
-                >
-                  New link
-                </Button>
+              <div className="flex flex-wrap justify-end gap-2">
+                {!m.is_admin && (
+                  <Button variant="ghost" className="!px-2 !py-1 text-xs" onClick={() => onEditLogin(m)}>
+                    Edit login
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   className="!px-2 !py-1 text-xs !text-bad"
@@ -406,16 +428,19 @@ function MembersTable({ client, reload, onLink }: { client: AdminClientDetail; r
   );
 }
 
-function InviteForm({ clientId, onAdded, onCancel }: { clientId: string; onAdded: (r: InviteResult) => void; onCancel?: () => void }) {
+function InviteForm({ clientId, onAdded, onCancel }: { clientId: string; onAdded: (r: InviteResult, password: string) => void; onCancel?: () => void }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState<"owner" | "viewer">("owner");
+  const [password, setPassword] = useState("");
+  const [shown, setShown] = useState(false);
 
   const add = useAction(async () => {
-    const result = await apiPost<InviteResult>(`/api/admin/clients/${clientId}/members`, { email, name, role });
+    const result = await apiPost<InviteResult>(`/api/admin/clients/${clientId}/members`, { email, name, role, password: password || null });
     setEmail("");
     setName("");
-    onAdded(result);
+    setPassword("");
+    onAdded(result, password);
   });
 
   function onSubmit(event: FormEvent) {
@@ -438,6 +463,32 @@ function InviteForm({ clientId, onAdded, onCancel }: { clientId: string; onAdded
           <option value="owner">Owner</option>
           <option value="viewer">Viewer</option>
         </SelectField>
+        <div className="sm:col-span-2">
+          <TextField
+            label="Password"
+            type="password"
+            shown={shown}
+            onShownChange={setShown}
+            autoComplete="new-password"
+            required
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            hint="Required: this is how they log in. At least 8 characters. You send them the login details afterwards. If this person already has an account, their own password stays (this one is not used)."
+          />
+          <div className="mt-2">
+            <Button
+              variant="ghost"
+              className="!px-2 !py-1 text-xs"
+              onClick={() => {
+                setPassword(randomPassword());
+                setShown(true);
+              }}
+            >
+              Generate
+            </Button>
+          </div>
+        </div>
       </div>
       <div className="mt-4 flex gap-3">
         <Button type="submit" variant="primary" busy={add.busy}>

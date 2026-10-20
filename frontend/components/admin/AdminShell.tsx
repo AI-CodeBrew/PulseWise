@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { BrandMark } from "@/components/ui/BrandMark";
 import { useApi } from "@/hooks/useApi";
-import { BRAND_NAME } from "@/lib/brand";
 import type { AdminAlert, ListResponse } from "@/lib/types";
 
 /** Fired by the Alerts page when an alert is resolved. */
@@ -46,7 +46,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     <div className="min-h-screen lg:pl-56">
       <aside className="fixed inset-y-0 left-0 hidden w-56 flex-col border-r border-line bg-surface lg:flex">
         <div className="flex h-14 items-center gap-2 px-5">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">{BRAND_NAME.charAt(0)}</span>
+          <BrandMark />
           <span className="font-semibold text-ink">Admin</span>
         </div>
         <nav aria-label="Admin" className="flex-1 space-y-0.5 px-3 py-2">

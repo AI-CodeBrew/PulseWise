@@ -16,6 +16,8 @@ const LABELS: Record<string, string> = {
   "admin.member_role_changed": "Changed a member's role",
   "admin.member_removed": "Removed someone's access",
   "admin.invite_link_created": "Created an invitation link",
+  "admin.user_password_set": "Set a new password for a user",
+  "admin.user_email_changed": "Changed a user's email",
   "admin.user_updated": "Edited a user",
   "admin.view_as_started": "Started viewing as a client",
   "admin.view_as_ended": "Stopped viewing as a client",

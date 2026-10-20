@@ -377,7 +377,7 @@ function ReportCard({ websiteId }: { websiteId: string }) {
 
 // ------------------------------------------------------------------ Shopify
 
-/** Connect this website to its Shopify store, so the client gets a Sales page and sales in the weekly report. */
+/** Connect this website to its Shopify store, so the client's weekly report gets a "Your store" section (orders, revenue, best sellers). */
 function ShopifyCard({ websiteId }: { websiteId: string }) {
   const shop = useApi<AdminShopify>(`/api/admin/websites/${websiteId}/shopify`);
   const [editing, setEditing] = useState(false);
@@ -412,7 +412,7 @@ function ShopifyCard({ websiteId }: { websiteId: string }) {
 
   return (
     <Card>
-      <CardHeader title="Shopify store" subtitle="Orders are copied every hour (no customer details), and shown to the client on their Sales page." />
+      <CardHeader title="Shopify store" subtitle="Orders are copied every hour (no customer details). The client sees their store sales in the weekly report." />
       <Async query={shop} skeleton={<Skeleton className="mx-5 mb-5 h-20" />}>
         {(c) => (
           <div className="space-y-4 px-4 pb-5 sm:px-5">
@@ -481,7 +481,7 @@ function ShopifyCard({ websiteId }: { websiteId: string }) {
                       variant="ghost"
                       busy={disconnect.busy}
                       onClick={() => {
-                        if (window.confirm("Disconnect this store? The copied orders are deleted and the client's Sales page will be empty.")) void disconnect.run();
+                        if (window.confirm("Disconnect this store? The copied orders are deleted and the \"Your store\" part of the client's weekly report will be empty.")) void disconnect.run();
                       }}
                     >
                       Disconnect

@@ -70,6 +70,29 @@
   --bad-soft: rgba(230, 103, 103, 0.14);
 }
 
+/*
+  The frame around the pages (sidebar + top bar) is a little dark, in light AND dark mode, so the logo corner
+  reads as one piece. It re-defines the same tokens, so everything inside it (menu, website name, date buttons)
+  follows without changes to those components. The pages themselves keep the normal theme.
+*/
+.chrome {
+  color-scheme: dark;
+  --page: #141414;
+  --surface: #141414; /* black */
+  --surface-2: #262626; /* hover */
+  --ink: #f5f5f5;
+  --ink-2: #cfcfcf;
+  --muted: #9e9e9e;
+  --line: rgba(255, 255, 255, 0.08);
+  --accent: #4ade80; /* green: the selected menu entry / date button */
+  --accent-soft: rgba(74, 222, 128, 0.14);
+}
+
+/* The thin green + red line along the very top of the frame (AppShell). */
+.chrome-stripe {
+  background: linear-gradient(90deg, #22c55e 0 50%, #ef4444 50% 100%);
+}
+
 /* Make the tokens available as Tailwind classes: bg-surface, text-ink-2, border-line ... */
 @theme inline {
   --color-page: var(--page);
@@ -91,4 +114,10 @@ body {
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-sans);
+}
+
+/* Our own eye button (PasswordInput) replaces the one Microsoft Edge draws inside password boxes, so there are not two. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
 }

@@ -84,7 +84,7 @@ def load_settings() -> Settings:
         cookie_secure=_bool("COOKIE_SECURE", frontend_url.startswith("https://")),
         posthog_allowed_hosts=["https://us.posthog.com", "https://eu.posthog.com"]
         + [h.rstrip("/") for h in _list("POSTHOG_ALLOWED_HOSTS", "")],  # add self-hosted addresses here
-        brand_name=os.getenv("BRAND_NAME", "").strip() or "PulseWise",
+        brand_name=os.getenv("BRAND_NAME", "").strip() or "Iris",
         frontend_url=frontend_url,
         cors_origins=_list("CORS_ORIGINS", frontend_url),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip(),

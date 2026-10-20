@@ -82,20 +82,14 @@ if (apiKey) {
   await admin.shot("website_page");
 }
 
-// 5. Add a person -> invitation link -> they choose a password and log in
+// 5. Add a person with a password (it is required) -> the admin gets the login details to hand over -> they log in with it
 await admin.goto(clientPath);
 await admin.waitForText("Add a person");
 await admin.fillLabel("Email", "new.person@e2e-client.test");
 await admin.fillLabel("Name", "New Person");
+await admin.fillLabel("Password", "Invited-Pass-2026");
 await admin.clickText("Add person");
-t.check("adding a person shows an invitation link", await admin.waitFor(`!!document.querySelector("pre code") && document.querySelector("pre code").innerText.includes("reset-password?token=")`, 20000));
-const inviteLink = await admin.eval(`document.querySelector("pre code").innerText`);
-await person.goto(inviteLink);
-t.check("the link opens a 'Welcome' page", await person.waitForText("Welcome! Choose your password"));
-await person.eval(`(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-  for (const el of document.querySelectorAll("input[type=password]")) { set.call(el, "Invited-Pass-2026"); el.dispatchEvent(new Event("input", { bubbles: true })); } })()`);
-await person.submit();
-t.check("choosing a password leads to login", await person.waitFor(`location.pathname === "/login"`));
+t.check("adding a person shows the login details to send them", await admin.waitFor(`!!document.querySelector("pre code") && document.querySelector("pre code").innerText.includes("Password: Invited-Pass-2026")`, 20000));
 await person.login("new.person@e2e-client.test", "Invited-Pass-2026");
 
 // 6. View as client (needs a website on this client)

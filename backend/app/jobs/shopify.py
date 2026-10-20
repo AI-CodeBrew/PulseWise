@@ -33,7 +33,7 @@ def _connected_websites() -> list[uuid.UUID]:
 @job(
     "shopify_sync",
     title="Shopify orders",
-    description="Copies new and changed orders from every connected Shopify store, so the Sales page stays up to date. Safe to run any time: orders are saved by their Shopify id, never twice.",
+    description="Copies new and changed orders from every connected Shopify store, so the \"Your store\" part of the weekly reports stays up to date. Safe to run any time: orders are saved by their Shopify id, never twice.",
     schedule="Every hour, at 35 past",
     cron={"minute": 35},
 )
